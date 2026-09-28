@@ -812,17 +812,18 @@ r += 2
 
 r = section(rt, r, "EXIT VALUATION — tax-adjusted", span=2)
 entry_cap_row = r
-rt.cell(row=r, column=1, value="Entry Cap Rate (Year-1 model NOI / Purchase Price)")
-rt.cell(row=r, column=2, value=f"={noi_y1}/{A['price']}").number_format = PCT1
+rt.cell(row=r, column=1, value="Entry Cap Rate ANCHOR for exit-spread convention = #2 above: In-Place, Day-0, reassessed tax (primary/cost-of-sale method)")
+rt.cell(row=r, column=2, value=f"={cap_inplace_addr}").font = BOLD
+rt.cell(row=r, column=2).number_format = PCT1
 entry_cap_addr = f"'Returns'!$B${entry_cap_row}"
 r += 1
 exit_cap_base_row = r
-rt.cell(row=r, column=1, value="Exit Cap Rate — base case (entry + 50bps)")
+rt.cell(row=r, column=1, value="Exit Cap Rate — base case (in-place entry + 50bps)")
 rt.cell(row=r, column=2, value=f"={entry_cap_addr}+{A['exit_spread_base']}").number_format = PCT1
 exit_cap_base_addr = f"'Returns'!$B${exit_cap_base_row}"
 r += 1
 exit_cap_sens_row = r
-rt.cell(row=r, column=1, value="Exit Cap Rate — sensitivity ceiling (entry + 100bps)")
+rt.cell(row=r, column=1, value="Exit Cap Rate — sensitivity ceiling (in-place entry + 100bps)")
 rt.cell(row=r, column=2, value=f"={entry_cap_addr}+{A['exit_spread_sens']}").number_format = PCT1
 r += 1
 eff_tax_exit_row = r
@@ -1230,6 +1231,16 @@ ra.cell(row=r, column=2, value=f"={a_uses_addr}-{a_loan_addr}").font = BOLD
 ra.cell(row=r, column=2).number_format = USDC
 a_equity_addr = f"'Returns (Assumed)'!$B${a_equity_row}"
 r += 1
+a_lp_eq_row = r
+ra.cell(row=r, column=1, value="  LP Equity (90%)")
+ra.cell(row=r, column=2, value=f"={a_equity_addr}*(1-{A['gp_coinvest']})").number_format = USDC
+a_lp_eq_addr = f"'Returns (Assumed)'!$B${a_lp_eq_row}"
+r += 1
+a_gp_eq_row = r
+ra.cell(row=r, column=1, value="  GP Equity (10%, co-invest)")
+ra.cell(row=r, column=2, value=f"={a_equity_addr}*{A['gp_coinvest']}").number_format = USDC
+a_gp_eq_addr = f"'Returns (Assumed)'!$B${a_gp_eq_row}"
+r += 1
 ra.cell(row=r, column=1, value="  memo: vs. Scenario B equity")
 ra.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC
 r += 2
@@ -1322,7 +1333,9 @@ r += 2
 
 RA = dict(a_equity_addr=a_equity_addr, a_uses_addr=a_uses_addr, a_loan_addr=a_loan_addr,
           a_levtotal_row=a_levtotal_row, a_irr_row=a_irr_row, a_em_row=a_em_row,
-          a_coc1_row=a_coc1_row, a_fee_addr=a_fee_addr, a_netproceeds_addr=a_netproceeds_addr)
+          a_coc1_row=a_coc1_row, a_fee_addr=a_fee_addr, a_netproceeds_addr=a_netproceeds_addr,
+          a_lp_eq_addr=a_lp_eq_addr, a_gp_eq_addr=a_gp_eq_addr, a_ucf_row=a_ucf_row,
+          a_ds_row=a_ds_row)
 print("Returns (Assumed) built through row", r)
 wb.save("model_wip.xlsx")
 
@@ -1333,11 +1346,13 @@ wf = sheet("Waterfall")
 WCOLS = list(range(3, 3 + HOLD))  # C..G = Year1..Year5, B = Year0
 colwidths(wf, [40, 13] + [13] * HOLD)
 r = 1
-r = title(wf, r, "WATERFALL — 8% Pref -> ROC -> 70/30 to 12% IRR -> 50/50")
+r = title(wf, r, "WATERFALL — 8% Pref -> ROC -> 70/30 to 12% IRR -> 50/50 (BASE CASE: Scenario A, assumed debt)")
 wf.cell(row=r, column=1,
         value=("Method: each tier tracks a compounding 'hurdle balance' (what LP is owed at that "
                "tier's rate) that is debited by every LP dollar received. The balance hitting zero is "
-               "mathematically equivalent to LP achieving exactly that IRR — no iterative solver needed.")).font = NOTE
+               "mathematically equivalent to LP achieving exactly that IRR — no iterative solver needed. "
+               "Runs on Scenario A (assumed debt, the base case) -- for the Scenario B (new debt) waterfall, "
+               "swap the 'Available Cash' and equity references below to the 'Returns' / 'Capital' tabs.")).font = NOTE
 r += 2
 
 hdr = r
@@ -1347,26 +1362,26 @@ for i, col in enumerate(WCOLS, start=1):
 r += 1
 
 avail_row = r
-wf.cell(row=r, column=1, value="Available Cash for Distribution")
+wf.cell(row=r, column=1, value="Available Cash for Distribution (Scenario A)")
 wf.cell(row=r, column=2, value=0).number_format = USDC
 for i, col in enumerate(WCOLS):
     cl = get_column_letter(RET['RCOLS'][i])
-    wf.cell(row=r, column=col, value=f"='Returns'!{cl}${RET['lev_cf_total_row']}").number_format = USDC
+    wf.cell(row=r, column=col, value=f"='Returns (Assumed)'!{cl}${RA['a_levtotal_row']}").number_format = USDC
 r += 1
 
 lp_inv_row = r
 wf.cell(row=r, column=1, value="LP Investment / GP Investment (Year 0)")
-wf.cell(row=r, column=2, value=f"=-{CAP['lp_eq_addr']}").number_format = USDC
+wf.cell(row=r, column=2, value=f"=-{RA['a_lp_eq_addr']}").number_format = USDC
 r += 1
 gp_inv_row = r
-wf.cell(row=r, column=2, value=f"=-{CAP['gp_eq_addr']}").number_format = USDC
+wf.cell(row=r, column=2, value=f"=-{RA['a_gp_eq_addr']}").number_format = USDC
 r += 1
 r += 1
 
 r = section(wf, r, "TIER 1 — Return of Capital + 8% Preferred Return (100% LP)", span=1 + HOLD)
 t1_bal_row = r
 wf.cell(row=r, column=1, value="Hurdle Balance, End of Year (8% compounding)")
-wf.cell(row=r, column=2, value=f"={CAP['lp_eq_addr']}").number_format = USDC
+wf.cell(row=r, column=2, value=f"={RA['a_lp_eq_addr']}").number_format = USDC
 r += 1
 t1_dist_row = r
 wf.cell(row=r, column=1, value="Tier 1 Distribution to LP")
@@ -1392,7 +1407,7 @@ r = rem_t1_row + 2
 r = section(wf, r, "TIER 2 — 70/30 LP/GP up to a 12% LP IRR", span=1 + HOLD)
 t2_bal_row = r
 wf.cell(row=r, column=1, value="12% Hurdle Balance, End of Year (compounding, net of ALL LP $ incl. Tier 1)")
-wf.cell(row=r, column=2, value=f"={CAP['lp_eq_addr']}").number_format = USDC
+wf.cell(row=r, column=2, value=f"={RA['a_lp_eq_addr']}").number_format = USDC
 r += 1
 t2_after_t1_row = r
 wf.cell(row=r, column=1, value="12% Hurdle Balance After Tier-1 Cash Applied")
@@ -1482,23 +1497,23 @@ lp_irr_row = r
 wf.cell(row=r, column=1, value="LP IRR")
 lp_range = f"B{lp_inv_row}:{get_column_letter(WCOLS[-1])}{lp_total_row}"
 # Build a single contiguous row for IRR: reuse lp_total_row col B as -investment
-wf.cell(row=lp_total_row, column=2, value=f"=-{CAP['lp_eq_addr']}").number_format = USDC
+wf.cell(row=lp_total_row, column=2, value=f"=-{RA['a_lp_eq_addr']}").number_format = USDC
 wf.cell(row=r, column=2, value=f'=IFERROR(IRR(B{lp_total_row}:{get_column_letter(WCOLS[-1])}{lp_total_row}),"N/A - no sign change / undefined")').number_format = PCT1
 r += 1
 gp_irr_row = r
-wf.cell(row=gp_total_row, column=2, value=f"=-{CAP['gp_eq_addr']}").number_format = USDC
+wf.cell(row=gp_total_row, column=2, value=f"=-{RA['a_gp_eq_addr']}").number_format = USDC
 wf.cell(row=r, column=1, value="GP IRR")
 wf.cell(row=r, column=2, value=f'=IFERROR(IRR(B{gp_total_row}:{get_column_letter(WCOLS[-1])}{gp_total_row}),"N/A - GP receives $0 in this scenario, IRR undefined")').number_format = PCT1
 r += 1
 lp_mult_row = r
 wf.cell(row=r, column=1, value="LP Equity Multiple")
 wf.cell(row=r, column=2,
-        value=f"=SUM(C{lp_total_row}:{get_column_letter(WCOLS[-1])}{lp_total_row})/{CAP['lp_eq_addr']}").number_format = "0.00\"x\""
+        value=f"=SUM(C{lp_total_row}:{get_column_letter(WCOLS[-1])}{lp_total_row})/{RA['a_lp_eq_addr']}").number_format = "0.00\"x\""
 r += 1
 gp_mult_row = r
 wf.cell(row=r, column=1, value="GP Equity Multiple")
 wf.cell(row=r, column=2,
-        value=f"=SUM(C{gp_total_row}:{get_column_letter(WCOLS[-1])}{gp_total_row})/{CAP['gp_eq_addr']}").number_format = "0.00\"x\""
+        value=f"=SUM(C{gp_total_row}:{get_column_letter(WCOLS[-1])}{gp_total_row})/{RA['a_gp_eq_addr']}").number_format = "0.00\"x\""
 r += 1
 
 WF = dict(avail_row=avail_row, lp_total_row=lp_total_row, gp_total_row=gp_total_row,
@@ -1611,11 +1626,16 @@ def price_scenario_cf(pdelta, spread):
     price_s = f"({A['price']}*(1+{pdelta}))"
     just_val_s = f"({price_s}*{A['cos_factor']})"
     tax_y1_s = f"({just_val_s}*{A['millage']})"
+    # noi1_s (Year-1 forward basis) drives the actual projected cash flows -- that's
+    # genuinely what the property is expected to collect, business-plan-inclusive.
     noi1_s = f"({noi1}+{A['buyer_tax_y1']}-{tax_y1_s})"
+    # day0_noi_s (Day-0 in-place basis) drives ONLY the entry-cap-rate figure used to
+    # anchor the exit cap, per the same correction applied on the Returns tab.
+    day0_noi_s = f"({day0_noi_addr}+{A['buyer_tax_y1']}-{tax_y1_s})"
     loan_s = f"({price_s}*{A['ltv']})"
     uses_s = f"({price_s}*(1+{A['closing_pct']})+({uses1}-{A['price']}*(1+{A['closing_pct']})))"
     equity_s = f"({uses_s}-{loan_s})"
-    entry_cap_s = f"({noi1_s}/{price_s})"
+    entry_cap_s = f"({day0_noi_s}/{price_s})"
     ec = f"({entry_cap_s}+{spread})"
     ds_io = f"({loan_s}*{A['rate']})"
     ds_amort = f"(-PMT({A['rate']},{A['amort_years']},{loan_s}))"
@@ -1777,7 +1797,8 @@ ck.cell(row=r, column=3, value=f'=IF(B{r}>=-0.01,"OK","FAIL")')
 r += 2
 
 r = section(ck, r, "6. LP EQUITY + GP EQUITY = TOTAL EQUITY", span=3)
-check_row("LP+GP Equity - Total Equity", f"={CAP['lp_eq_addr']}+{CAP['gp_eq_addr']}-{CAP['equity_addr']}")
+check_row("Scenario B (Capital tab): LP+GP Equity - Total Equity", f"={CAP['lp_eq_addr']}+{CAP['gp_eq_addr']}-{CAP['equity_addr']}")
+check_row("Scenario A (base case, Returns (Assumed) tab): LP+GP Equity - Total Equity", f"={RA['a_lp_eq_addr']}+{RA['a_gp_eq_addr']}-{RA['a_equity_addr']}")
 r += 1
 
 r = section(ck, r, "7. DEBT SCHEDULE INTERNAL CONSISTENCY", span=3)
@@ -1819,62 +1840,95 @@ sm.cell(row=r, column=1).alignment = Alignment(wrap_text=True)
 sm.row_dimensions[r].height = 45
 r += 3
 
-r = section(sm, r, "SOURCES & USES", span=2)
+r = section(sm, r, "SOURCES & USES — BASE CASE: Scenario A, assumed debt", span=2)
 sm.cell(row=r, column=1, value="Purchase Price"); sm.cell(row=r, column=2, value=f"={A['price']}").number_format = USDC; r += 1
-sm.cell(row=r, column=1, value="Total Uses"); sm.cell(row=r, column=2, value=f"={CAP['uses_total_addr']}").number_format = USDC; r += 1
-sm.cell(row=r, column=1, value="Senior Loan"); sm.cell(row=r, column=2, value=f"={DEBT['loan_addr']}").number_format = USDC; r += 1
-sm.cell(row=r, column=1, value="Sponsor Equity"); sm.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC; r += 1
-sm.cell(row=r, column=1, value="  LP Equity (90%)"); sm.cell(row=r, column=2, value=f"={CAP['lp_eq_addr']}").number_format = USDC; r += 1
-sm.cell(row=r, column=1, value="  GP Equity (10%)"); sm.cell(row=r, column=2, value=f"={CAP['gp_eq_addr']}").number_format = USDC; r += 2
+sm.cell(row=r, column=1, value="Total Uses (incl. loan assumption fee)"); sm.cell(row=r, column=2, value=f"={RA['a_uses_addr']}").number_format = USDC; r += 1
+sm.cell(row=r, column=1, value="Assumed Debt (First + Supplemental, Year-0)"); sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}").number_format = USDC; r += 1
+sm.cell(row=r, column=1, value="Sponsor Equity").font = BOLD
+sm.cell(row=r, column=2, value=f"={RA['a_equity_addr']}").font = BOLD
+sm.cell(row=r, column=2).number_format = USDC; r += 1
+sm.cell(row=r, column=1, value="  LP Equity (90%)"); sm.cell(row=r, column=2, value=f"={RA['a_lp_eq_addr']}").number_format = USDC; r += 1
+sm.cell(row=r, column=1, value="  GP Equity (10%)"); sm.cell(row=r, column=2, value=f"={RA['a_gp_eq_addr']}").number_format = USDC; r += 2
 
 r = section(sm, r, "KEY METRICS", span=2)
 sm.cell(row=r, column=1, value="1. Broker-Stated Cap Rate (seller's current tax basis)"); sm.cell(row=r, column=2, value=f"={A['broker_cap']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, reassessed tax (true going-in)").font = BOLD
+sm.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, reassessed tax (TRUE going-in -- anchors the exit cap below)").font = BOLD
 sm.cell(row=r, column=2, value=f"={RET['cap_inplace_addr']}").font = BOLD
 sm.cell(row=r, column=2).number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr business plan -- used for exit-spread convention below)"); sm.cell(row=r, column=2, value=f"={RET['entry_cap_addr']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Exit Cap Rate (base case, Year-1-Forward basis + 50bps -- see NOI Bridge on Returns tab)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Loan-to-Value"); sm.cell(row=r, column=2, value=f"='Debt'!C{DEBT['loan_row']}/{A['price']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Binding Debt Constraint"); sm.cell(row=r, column=2, value=f"='Debt'!C{DEBT['bind_row']}"); r += 1
+sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr business plan -- NOT used for exit-spread convention)")
+sm.cell(row=r, column=2, value=f"='Returns'!B{RET['cap_y1fwd_row']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Exit Cap Rate (base case, In-Place entry + 50bps -- see NOI Bridge on Returns tab)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Assumed-Debt LTV at Close (fixed balance, not sized)"); sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}/{A['price']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Hold Period"); sm.cell(row=r, column=2, value=f"={A['hold_years']}").number_format = "0 \"years\""; r += 2
 
-r = section(sm, r, "RETURNS", span=2)
-sm.cell(row=r, column=1, value="Unlevered IRR"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['unlev_irr_row']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Levered IRR (deal-level)"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['lev_irr_row']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Unlevered Equity Multiple"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['unlev_em_row']}").number_format = "0.00\"x\""; r += 1
-sm.cell(row=r, column=1, value="Levered Equity Multiple (deal-level)"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['lev_em_row']}").number_format = "0.00\"x\""; r += 1
+r = section(sm, r, "RETURNS — BASE CASE: Scenario A, assumed debt", span=2)
+sm.cell(row=r, column=1, value="Unlevered IRR (debt-agnostic)"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['unlev_irr_row']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Levered IRR (deal-level)").font = BOLD
+sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_irr_row']}").font = BOLD
+sm.cell(row=r, column=2).number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Unlevered Equity Multiple (debt-agnostic)"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['unlev_em_row']}").number_format = "0.00\"x\""; r += 1
+sm.cell(row=r, column=1, value="Levered Equity Multiple (deal-level)").font = BOLD
+sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_em_row']}").font = BOLD
+sm.cell(row=r, column=2).number_format = "0.00\"x\""; r += 1
 sm.cell(row=r, column=1, value="LP IRR"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_irr_row']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="LP Equity Multiple"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_mult_row']}").number_format = "0.00\"x\""; r += 1
 sm.cell(row=r, column=1, value="GP IRR"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_irr_row']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="GP Equity Multiple"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_mult_row']}").number_format = "0.00\"x\""; r += 2
 
-r = section(sm, r, "DEBT SCENARIO COMPARISON — neither is the base case; deal-level (pre-promote) returns", span=3)
-sm.cell(row=r, column=2, value="B: New Debt (generic)").font = BOLD
-sm.cell(row=r, column=3, value="A: Assumed Debt").font = BOLD
+r = section(sm, r, "DEBT SCENARIO COMPARISON — deal-level (pre-promote) returns", span=3)
+sm.cell(row=r, column=2, value="A: Assumed Debt (BASE CASE)").font = BOLD
+sm.cell(row=r, column=3, value="B: New Debt (alternative)").font = BOLD
 r += 1
 sm.cell(row=r, column=1, value="Year-0 Loan Amount")
-sm.cell(row=r, column=2, value=f"={DEBT['loan_addr']}").number_format = USDC
-sm.cell(row=r, column=3, value=f"={RA['a_loan_addr']}").number_format = USDC
+sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}").number_format = USDC
+sm.cell(row=r, column=3, value=f"={DEBT['loan_addr']}").number_format = USDC
 r += 1
 sm.cell(row=r, column=1, value="Rate")
-sm.cell(row=r, column=2, value=f"={A['rate']}").number_format = PCT1
-sm.cell(row=r, column=3, value=f"={A['assum_blended_rate']}").number_format = PCT1
+sm.cell(row=r, column=2, value=f"={A['assum_blended_rate']}").number_format = PCT1
+sm.cell(row=r, column=3, value=f"={A['rate']}").number_format = PCT1
 r += 1
 sm.cell(row=r, column=1, value="Sponsor Equity Required")
-sm.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC
-sm.cell(row=r, column=3, value=f"={RA['a_equity_addr']}").number_format = USDC
+sm.cell(row=r, column=2, value=f"={RA['a_equity_addr']}").number_format = USDC
+sm.cell(row=r, column=3, value=f"={CAP['equity_addr']}").number_format = USDC
 r += 1
 sm.cell(row=r, column=1, value="Levered IRR (deal-level)")
-sm.cell(row=r, column=2, value=f"='Returns'!B{RET['lev_irr_row']}").number_format = PCT1
-sm.cell(row=r, column=3, value=f"='Returns (Assumed)'!B{RA['a_irr_row']}").number_format = PCT1
+sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_irr_row']}").number_format = PCT1
+sm.cell(row=r, column=3, value=f"='Returns'!B{RET['lev_irr_row']}").number_format = PCT1
 r += 1
 sm.cell(row=r, column=1, value="Levered Equity Multiple (deal-level)")
-sm.cell(row=r, column=2, value=f"='Returns'!B{RET['lev_em_row']}").number_format = "0.00\"x\""
-sm.cell(row=r, column=3, value=f"='Returns (Assumed)'!B{RA['a_em_row']}").number_format = "0.00\"x\""
+sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_em_row']}").number_format = "0.00\"x\""
+sm.cell(row=r, column=3, value=f"='Returns'!B{RET['lev_em_row']}").number_format = "0.00\"x\""
 r += 1
 sm.cell(row=r, column=1, value="Year-1 Cash-on-Cash")
-sm.cell(row=r, column=2, value=f"='Returns'!C{RET['lev_before_exit_row']}/'Returns'!B{RET['inv_row']}").number_format = PCT1
-sm.cell(row=r, column=3, value=f"='Returns (Assumed)'!B{RA['a_coc1_row']}").number_format = PCT1
+sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_coc1_row']}").number_format = PCT1
+sm.cell(row=r, column=3, value=f"='Returns'!C{RET['lev_before_exit_row']}/'Returns'!B{RET['inv_row']}").number_format = PCT1
+r += 2
+
+r = section(sm, r, "BID PRICE — max price by target return (Scenario A, assumed debt)", span=5)
+sm.cell(row=r, column=1, value=(
+    "Solved with scipy root-finding in price_solve.py (repo root), not a live in-sheet formula -- "
+    "true goal-seek isn't expressible as static Excel formulas without an iterative/circular solver. "
+    "Re-run that script any time Assumptions change; these are reported results, not linked cells.")).font = NOTE
+r += 1
+hdr = r
+for i, h in enumerate(["Target", "Max Price", "vs. $13.8M Asking", "Implied In-Place Cap", "Deal IRR / LP IRR"], start=1):
+    sm.cell(row=hdr, column=i, value=h).font = BOLD
+r += 1
+bid_rows = [
+    ("LP clears 8% pref (LP IRR = 8%)", 15_471_922, "+12.1%", 0.056687, "5.34% / 8.00%"),
+    ("Levered IRR (deal) = 12%", 12_294_971, "-10.9%", 0.075691, "12.00% / 12.63%"),
+    ("Levered IRR (deal) = 15%", 11_552_192, "-16.3%", 0.081642, "15.00% / 14.31%"),
+]
+for label, price_val, vs_ask, cap_val, irr_str in bid_rows:
+    sm.cell(row=r, column=1, value=label)
+    sm.cell(row=r, column=2, value=price_val).number_format = USDC
+    sm.cell(row=r, column=3, value=vs_ask)
+    sm.cell(row=r, column=4, value=cap_val).number_format = PCT1
+    sm.cell(row=r, column=5, value=irr_str)
+    r += 1
+sm.cell(row=r, column=1, value=(
+    "None of the three targets hit the structural floor (~$8.78M, below which the assumed $9.45M loan "
+    "would exceed Total Uses -- see price_solve.py output). All three are cleanly reachable.")).font = NOTE
 r += 2
 
 r = section(sm, r, "DEAL THESIS", span=2)
