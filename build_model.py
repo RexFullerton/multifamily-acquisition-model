@@ -185,7 +185,7 @@ A['recert_inspect'] = inp(ws, r, "Recertification Inspection Cost ($, one-time)"
 A['recert_remediation'] = inp(ws, r, "Recertification Remediation Contingency ($, one-time)", 150000, USDC, "placeholder — genuinely unknowable without an engineer's report"); r += 1
 r += 1
 
-r = section(ws, r, "DEBT")
+r = section(ws, r, "DEBT — SCENARIO B: NEW ACQUISITION DEBT (generic)")
 A['sofr'] = inp(ws, r, "1-Month SOFR", 0.0385, PCT1, "sofrrate.com, reading as of 9/18/2026"); r += 1
 A['spread'] = inp(ws, r, "Spread (bps over SOFR)", 0.0325, PCT1); r += 1
 A['rate'] = frm(ws, r, "All-In Floating Rate", f"={A['sofr']}+{A['spread']}", PCT1, bold=True); r += 1
@@ -194,6 +194,19 @@ A['min_dscr'] = inp(ws, r, "Minimum DSCR", 1.25, "0.00x"); r += 1
 A['min_debt_yield'] = inp(ws, r, "Minimum Debt Yield %", 0.08, PCT1); r += 1
 A['io_years'] = inp(ws, r, "Interest-Only Period (years)", 2, "0"); r += 1
 A['amort_years'] = inp(ws, r, "Amortization (years)", 30, "0"); r += 1
+r += 1
+
+r = section(ws, r, "DEBT — SCENARIO A: ASSUMABLE EXISTING DEBT (broker-disclosed, LoopNet/Crexi)")
+A['assum_first_bal'] = inp(ws, r, "First Mortgage Balance ($)", 5887000, USDC, "Crexi listing (\"Non-Agency\"); LoopNet shows $5,908,933.50 -- small discrepancy, likely different as-of dates. Used the Crexi figure since paired with the explicit 4.2% blended-rate confirmation."); r += 1
+A['assum_first_rate'] = inp(ws, r, "First Mortgage Rate (fixed)", 0.030, PCT1, "LoopNet + Crexi, both state 3.0% fixed"); r += 1
+A['assum_first_maturity_yr'] = inp(ws, r, "First Mortgage Maturity (model Year #)", 3, "0", "Broker states \"fixed until December 2029.\" If Year 1 = calendar 2027, Dec 2029 falls in model Year 3 -- adjust this cell if your actual closing date shifts the calendar mapping."); r += 1
+A['assum_supp_bal'] = inp(ws, r, "Supplemental Loan Balance ($)", 3563000, USDC, "LoopNet + Crexi, both state $3,563,000"); r += 1
+A['assum_supp_rate'] = inp(ws, r, "Supplemental Loan Rate", 0.062, PCT1, "LoopNet + Crexi, both state 6.20%"); r += 1
+A['assum_blended_rate'] = frm(ws, r, "Blended Rate (formula, weighted avg -- ties to broker's stated 4.2%)",
+                                f"=({A['assum_first_bal']}*{A['assum_first_rate']}+{A['assum_supp_bal']}*{A['assum_supp_rate']})/({A['assum_first_bal']}+{A['assum_supp_bal']})",
+                                PCT1); r += 1
+A['assum_io'] = inp(ws, r, "Both Loans Interest-Only Through First's Maturity (1=yes)", 1, "0", "JUDGMENT -- amortization/IO status is NOT disclosed publicly for either loan. IO is a common structure for non-agency assumable loans marketed on a cash-flow basis, and is roughly consistent with the broker's \"almost 10% cash-on-cash Day 1\" claim. Flagged, not confirmed."); r += 1
+A['assum_fee_pct'] = inp(ws, r, "Loan Assumption Fee (% of assumed balance)", 0.005, PCT1, "JUDGMENT -- not disclosed. 0.5-1.0% is a commonly cited range for CMBS/balance-sheet loan assumption fees; used the low end. Also assumes ~30-60 days of lender consent/underwriting, not separately costed."); r += 1
 r += 1
 
 r = section(ws, r, "HOLD & EXIT")
@@ -506,7 +519,9 @@ for col in YEAR_COLS:
     op.cell(row=r, column=col).font = BOLD
 r += 2
 
-OP.update(payroll_row=payroll_row, tax_row=tax_row, opex_total_row=opex_total_row,
+OP.update(payroll_row=payroll_row, repairs_row=repairs_row, turnover_row=turnover_row,
+          contract_row=contract_row, util_row=util_row, ins_row=ins_row, tax_row=tax_row,
+          mgmt_row=mgmt_row, ga_row=ga_row, mktg_row=mktg_row, opex_total_row=opex_total_row,
           noi_row=noi_row, noi_pretax_row=noi_pretax_row, reserves_row=reserves_row,
           capex_row=capex_row, ucf_row=ucf_row, yr_row=yr_row)
 
@@ -568,12 +583,12 @@ hdr = r
 for i, h in enumerate(["Year", "Beg. Balance", "Interest", "Principal", "Debt Service", "End Balance"], start=1):
     db.cell(row=hdr, column=i, value=h).font = BOLD
 r += 1
-amort_start = r
 pmt_formula = f"=-PMT({A['rate']},{A['amort_years']},{loan_addr})"
 db.cell(row=r, column=1, value="Annual P&I Payment (post-IO)")
 db.cell(row=r, column=2, value=pmt_formula).number_format = USDC
 pi_addr = f"'Debt'!$B${r}"
 r += 1
+amort_start = r  # first Year-1..5 data row -- must point HERE, not at the P&I payment label row above
 for y in range(1, 6):
     db.cell(row=r, column=1, value=y).number_format = "0"
     if y == 1:
@@ -661,6 +676,139 @@ colwidths(rt, [38, 13] + [13] * HOLD)
 r = 1
 r = title(rt, r, "RETURNS — Unlevered & Levered, 5-Year Hold")
 r += 1
+
+# =====================================================================
+# NOI BRIDGE — broker-stated -> true Day-0 in-place -> Year-1 forward
+# Built live so the "in-place" cap rate is a real, auditable formula,
+# not just report prose. Day-0 uses Unit Mix's raw in-place rents
+# directly (F/G columns) with NO market-rent growth, NO loss-to-lease
+# burn-off, and NO renovation-premium capture -- i.e. what the property
+# actually collects on day one, before any of the business plan's own
+# value creation. Everything non-revenue (fixed $/unit opex lines,
+# reassessed property tax) is identical to Year 1 already, since none
+# of those lines depend on the rent-growth/burn-off/capture engine.
+# =====================================================================
+r = section(rt, r, "NOI BRIDGE — Broker-Stated -> True In-Place (Day 0) -> Year-1 Forward", span=2)
+rt.cell(row=r, column=1, value=(
+    "Day-0 = raw in-place rents from Unit Mix, no growth/burn-off/renovation credit. "
+    "Year-1 Forward = the Operating Model's Year-1 column (includes a partial year of business-plan execution). "
+    "These are two different concepts; only Day-0 is a conventional 'going-in' NOI.")).font = NOTE
+r += 1
+
+day0_gpr_row = r
+rt.cell(row=r, column=1, value="Day-0 Gross Potential Rent (raw in-place, no growth/burnoff/capture)")
+day0_gpr_f = (f"=(SUMPRODUCT('Unit Mix'!$C${UM['data_start']}:$C${UM['data_end']},"
+              f"'Unit Mix'!$F${UM['data_start']}:$F${UM['data_end']})"
+              f"+SUMPRODUCT('Unit Mix'!$D${UM['data_start']}:$D${UM['data_end']},"
+              f"'Unit Mix'!$G${UM['data_start']}:$G${UM['data_end']}))*12")
+rt.cell(row=r, column=2, value=day0_gpr_f).number_format = USDC
+day0_gpr_addr = f"'Returns'!$B${r}"
+r += 1
+day0_vac_row = r
+rt.cell(row=r, column=1, value="Less: Physical Vacancy")
+rt.cell(row=r, column=2, value=f"=-{day0_gpr_addr}*{A['vacancy']}").number_format = USDC
+r += 1
+day0_cl_row = r
+rt.cell(row=r, column=1, value="Less: Credit Loss")
+rt.cell(row=r, column=2, value=f"=-{day0_gpr_addr}*{A['credit_loss']}").number_format = USDC
+r += 1
+day0_con_row = r
+rt.cell(row=r, column=1, value="Less: Concessions")
+rt.cell(row=r, column=2, value=f"=-{day0_gpr_addr}*{A['concessions']}").number_format = USDC
+r += 1
+day0_oi_row = r
+rt.cell(row=r, column=1, value="Plus: Other Income")
+rt.cell(row=r, column=2, value=f"={A['units']}*{A['other_income_mo']}*12").number_format = USDC
+r += 1
+day0_egi_row = r
+rt.cell(row=r, column=1, value="Day-0 Effective Gross Income").font = BOLD
+rt.cell(row=r, column=2, value=f"=SUM(B{day0_gpr_row}:B{day0_oi_row})").font = BOLD
+rt.cell(row=r, column=2).number_format = USDC
+day0_egi_addr = f"'Returns'!$B${day0_egi_row}"
+r += 1
+day0_fixedopex_row = r
+rt.cell(row=r, column=1, value="Fixed Opex Lines (payroll..marketing, ex-mgmt-fee -- identical to Year 1, no growth applied in Year 1)")
+fixed_opex_terms = "+".join([f"{OPS}$B${OP[k]}" for k in
+                              ["payroll_row", "repairs_row", "turnover_row", "contract_row",
+                               "util_row", "ins_row", "tax_row", "ga_row", "mktg_row"]])
+rt.cell(row=r, column=2, value=f"={fixed_opex_terms}").number_format = USDC
+r += 1
+day0_mgmt_row = r
+rt.cell(row=r, column=1, value="Management Fee (3.5% of Day-0 EGI)")
+rt.cell(row=r, column=2, value=f"=-{day0_egi_addr}*{A['mgmt_fee_pct']}").number_format = USDC
+r += 1
+day0_noi_row = r
+rt.cell(row=r, column=1, value="DAY-0 IN-PLACE NOI (reassessed-tax basis)").font = BOLD
+rt.cell(row=r, column=2, value=f"={day0_egi_addr}+B{day0_fixedopex_row}+B{day0_mgmt_row}").font = BOLD
+rt.cell(row=r, column=2).number_format = USDC
+day0_noi_addr = f"'Returns'!$B${day0_noi_row}"
+r += 2
+
+r = section(rt, r, "Decomposition of the gap to Year-1 Forward NOI (each effect isolated via live counterfactual, not estimated)", span=2)
+rt.cell(row=r, column=1, value=(
+    "Counterfactual S2 = burn-off ON (55% turnover x 50% burn-off, on the 73 prior-renovated units, toward "
+    "Year-1's growth-adjusted market rent) but renovation-premium capture OFF (24 classic units stay at raw "
+    "in-place). Isolates the burn-off effect cleanly because market-rent growth only enters Year-1 GPR THROUGH "
+    "the burn-off and capture mechanisms -- with both off, growth alone has zero effect on Year-1 (verified).")).font = NOTE
+r += 1
+
+s2_classic_sum = f"SUMPRODUCT('Unit Mix'!$C${UM['data_start']}:$C${UM['data_end']},'Unit Mix'!$F${UM['data_start']}:$F${UM['data_end']})"
+s2_renov_terms = []
+for tb in type_blocks:
+    row_i = tb['row_i']; market_row = tb['market']
+    term = (f"'Unit Mix'!$D${row_i}*('Unit Mix'!$G${row_i}+{A['turnover_rate']}*{A['burnoff_pct']}"
+            f"*({OPS}$B${market_row}-'Unit Mix'!$G${row_i}))")
+    s2_renov_terms.append(term)
+s2_gpr_row = r
+rt.cell(row=r, column=1, value="  S2 GPR: Day-0 classic (raw in-place) + burn-off-adjusted prior-renovated tracks")
+rt.cell(row=r, column=2, value=f"=({s2_classic_sum}+{'+'.join(s2_renov_terms)})*12").number_format = USDC
+s2_gpr_addr = f"'Returns'!$B${s2_gpr_row}"
+r += 1
+s2_egi_row = r
+rt.cell(row=r, column=1, value="  S2 EGI (same vacancy/credit-loss/concessions/%/other-income rates as Day-0)")
+rt.cell(row=r, column=2,
+        value=f"={s2_gpr_addr}*(1-{A['vacancy']}-{A['credit_loss']}-{A['concessions']})+{A['units']}*{A['other_income_mo']}*12").number_format = USDC
+s2_egi_addr = f"'Returns'!$B${s2_egi_row}"
+r += 1
+s2_noi_row = r
+rt.cell(row=r, column=1, value="  S2 NOI (Day-0 fixed opex + mgmt fee on S2 EGI)")
+rt.cell(row=r, column=2, value=f"={s2_egi_addr}+B{day0_fixedopex_row}-{s2_egi_addr}*{A['mgmt_fee_pct']}").number_format = USDC
+s2_noi_addr = f"'Returns'!$B${s2_noi_row}"
+r += 2
+
+b_day0_row = r
+rt.cell(row=r, column=1, value="  Day-0 In-Place NOI")
+rt.cell(row=r, column=2, value=f"={day0_noi_addr}").number_format = USDC
+r += 1
+b_burnoff_row = r
+rt.cell(row=r, column=1, value="  + Loss-to-lease burn-off effect (isolated: S2 NOI - Day-0 NOI)")
+rt.cell(row=r, column=2, value=f"={s2_noi_addr}-{day0_noi_addr}").number_format = USDC
+r += 1
+b_capture_row = r
+rt.cell(row=r, column=1, value="  + Renovation-premium partial-year capture effect (isolated: Year-1 actual - S2 NOI)")
+rt.cell(row=r, column=2, value=f"={noi_y1}-{s2_noi_addr}").number_format = USDC
+r += 1
+b_y1_row = r
+rt.cell(row=r, column=1, value="  = YEAR-1 FORWARD NOI (Operating Model, ties out exactly)").font = BOLD
+rt.cell(row=r, column=2, value=f"=B{b_day0_row}+B{b_burnoff_row}+B{b_capture_row}").font = BOLD
+rt.cell(row=r, column=2).number_format = USDC
+r += 2
+
+r = section(rt, r, "CAP RATE, THREE WAYS", span=2)
+cap_broker_row = r
+rt.cell(row=r, column=1, value="1. Broker-Stated Cap Rate (seller's current tax basis)")
+rt.cell(row=r, column=2, value=f"={A['broker_cap']}").number_format = PCT1
+r += 1
+cap_inplace_row = r
+rt.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, REASSESSED tax (the true going-in number)").font = BOLD
+rt.cell(row=r, column=2, value=f"={day0_noi_addr}/{A['price']}").font = BOLD
+rt.cell(row=r, column=2).number_format = PCT1
+cap_inplace_addr = f"'Returns'!$B${cap_inplace_row}"
+r += 1
+cap_y1fwd_row = r
+rt.cell(row=r, column=1, value="3. Year-1 FORWARD Cap Rate (includes partial-year business plan execution -- NOT a going-in number)")
+rt.cell(row=r, column=2, value=f"={noi_y1}/{A['price']}").number_format = PCT1
+r += 2
 
 r = section(rt, r, "EXIT VALUATION — tax-adjusted", span=2)
 entry_cap_row = r
@@ -830,8 +978,352 @@ RET = dict(entry_cap_addr=entry_cap_addr, exit_cap_base_addr=exit_cap_base_addr,
            lev_cf_total_row=lev_cf_total_row, lev_exit_row=lev_exit_row,
            inv_row=inv_row, uses_row=uses_row, unlev_irr_row=unlev_irr_row, lev_irr_row=lev_irr_row,
            unlev_em_row=unlev_em_row, lev_em_row=lev_em_row, RCOLS=RCOLS,
-           fwd_noi_addr=fwd_noi_addr, eff_tax_exit_addr=eff_tax_exit_addr)
+           fwd_noi_addr=fwd_noi_addr, eff_tax_exit_addr=eff_tax_exit_addr,
+           day0_noi_addr=day0_noi_addr, cap_inplace_addr=cap_inplace_addr,
+           cap_broker_row=cap_broker_row, cap_inplace_row=cap_inplace_row, cap_y1fwd_row=cap_y1fwd_row,
+           b_day0_row=b_day0_row, b_burnoff_row=b_burnoff_row, b_capture_row=b_capture_row, b_y1_row=b_y1_row)
 print("Returns built through row", r)
+wb.save("model_wip.xlsx")
+
+# =====================================================================
+# 6b. DEBT (ASSUMED) — Scenario A: assume the existing loan, refinance
+#     at its maturity if that falls inside the hold. Fully dynamic on
+#     the maturity-year assumption cell (IF-based), not hardcoded to
+#     today's default of Year 3.
+# =====================================================================
+da = sheet("Debt (Assumed)")
+DACOLS = list(range(2, 2 + HOLD))  # B..F = Year1..Year5
+colwidths(da, [36] + [14] * HOLD)
+r = 1
+r = title(da, r, "DEBT (ASSUMED) — Scenario A: broker-disclosed existing loan + refinance at maturity")
+da.cell(row=r, column=1, value=(
+    "First mortgage and supplemental loan sourced from LoopNet/Crexi (see Assumptions). Amortization/IO "
+    "status is NOT disclosed for either -- Assumptions!assum_io is a labeled judgment toggle. If the first "
+    "mortgage's maturity (Assumptions!assum_first_maturity_yr) falls inside the 5-year hold, the combined "
+    "balance is refinanced at that point into new debt sized on Scenario B's generic terms (LTV/DSCR/Debt "
+    "Yield, whichever binds).")).font = NOTE
+r += 2
+
+hdr = r
+da.cell(row=hdr, column=1, value="").font = BOLD
+for i, col in enumerate(DACOLS, start=1):
+    da.cell(row=hdr, column=col, value=f"Year {i}").font = BOLD
+r += 1
+
+mat = A['assum_first_maturity_yr']
+io_flag = A['assum_io']
+
+r = section(da, r, "FIRST MORTGAGE (pre-maturity)", span=1 + HOLD)
+f_beg_row = r
+da.cell(row=r, column=1, value="Beginning Balance")
+for i, col in enumerate(DACOLS):
+    cl = get_column_letter(col)
+    if i == 0:
+        f = f"={A['assum_first_bal']}"
+    else:
+        prev = get_column_letter(col - 1)
+        f = f"=IF({OPS}${cl}${yr_row}<={mat},{prev}{f_beg_row}-{prev}{r+1},0)"  # placeholder, fixed below
+    da.cell(row=r, column=col, value=f).number_format = USDC
+r += 1
+f_int_row = r
+da.cell(row=r, column=1, value="Interest")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},{cl}{f_beg_row}*{A['assum_first_rate']},0)").number_format = USDC
+r += 1
+f_prin_row = r
+da.cell(row=r, column=1, value="Principal (0 if IO)")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    pmt_amort = f"(-PMT({A['assum_first_rate']},{A['amort_years']},{A['assum_first_bal']})-{cl}{f_int_row})"
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({io_flag}=1,0,{pmt_amort}),0)").number_format = USDC
+r += 1
+f_end_row = r
+da.cell(row=r, column=1, value="Ending Balance")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},{cl}{f_beg_row}-{cl}{f_prin_row},0)").number_format = USDC
+r += 2
+# fix beginning-balance formula now that f_end_row is known (row = f_beg_row+3)
+for i, col in enumerate(DACOLS):
+    if i == 0:
+        continue
+    cl = get_column_letter(col)
+    prev = get_column_letter(col - 1)
+    da.cell(row=f_beg_row, column=col,
+            value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({OPS}${prev}${yr_row}<={mat},{prev}{f_end_row},{A['assum_first_bal']}),0)")
+
+r = section(da, r, "SUPPLEMENTAL LOAN (pre-maturity)", span=1 + HOLD)
+s_beg_row = r
+da.cell(row=r, column=1, value="Beginning Balance")
+for i, col in enumerate(DACOLS):
+    cl = get_column_letter(col)
+    if i == 0:
+        f = f"={A['assum_supp_bal']}"
+        da.cell(row=r, column=col, value=f).number_format = USDC
+r += 1
+s_int_row = r
+da.cell(row=r, column=1, value="Interest")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},{cl}{s_beg_row}*{A['assum_supp_rate']},0)").number_format = USDC
+r += 1
+s_prin_row = r
+da.cell(row=r, column=1, value="Principal (0 if IO)")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    pmt_amort = f"(-PMT({A['assum_supp_rate']},{A['amort_years']},{A['assum_supp_bal']})-{cl}{s_int_row})"
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({io_flag}=1,0,{pmt_amort}),0)").number_format = USDC
+r += 1
+s_end_row = r
+da.cell(row=r, column=1, value="Ending Balance")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},{cl}{s_beg_row}-{cl}{s_prin_row},0)").number_format = USDC
+r += 2
+for i, col in enumerate(DACOLS):
+    if i == 0:
+        continue
+    cl = get_column_letter(col)
+    prev = get_column_letter(col - 1)
+    da.cell(row=s_beg_row, column=col,
+            value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({OPS}${prev}${yr_row}<={mat},{prev}{s_end_row},{A['assum_supp_bal']}),0)")
+    da.cell(row=s_beg_row, column=col).number_format = USDC
+
+r = section(da, r, "REFINANCE AT MATURITY (fires the year after Assumptions!assum_first_maturity_yr)", span=1 + HOLD)
+combined_payoff_row = r
+da.cell(row=r, column=1, value="Payoff Balance (First + Supplemental, at maturity)")
+da.cell(row=r, column=2, value=f"=INDEX(B{f_end_row}:{get_column_letter(DACOLS[-1])}{f_end_row},{mat})+INDEX(B{s_end_row}:{get_column_letter(DACOLS[-1])}{s_end_row},{mat})").number_format = USDC
+r += 1
+refi_noi_row = r
+da.cell(row=r, column=1, value="NOI in the refinance year (Operating Model, dynamically indexed)")
+da.cell(row=r, column=2, value=f"=INDEX({OPS}${get_column_letter(YEAR_COLS[0])}${OP['noi_row']}:{OPS}${get_column_letter(YEAR_COLS[-1])}${OP['noi_row']},{mat}+1)").number_format = USDC
+refi_noi_addr = f"'Debt (Assumed)'!$B${r}"
+r += 1
+refi_ltv_row = r
+da.cell(row=r, column=1, value="New Loan — LTV constraint")
+da.cell(row=r, column=2, value=f"={A['price']}*{A['ltv']}").number_format = USDC
+r += 1
+refi_dy_row = r
+da.cell(row=r, column=1, value="New Loan — Debt Yield constraint")
+da.cell(row=r, column=2, value=f"={refi_noi_addr}/{A['min_debt_yield']}").number_format = USDC
+r += 1
+refi_dscr_row = r
+da.cell(row=r, column=1, value="New Loan — DSCR constraint (IO-equivalent)")
+da.cell(row=r, column=2, value=f"={refi_noi_addr}/({A['min_dscr']}*{A['rate']})").number_format = USDC
+r += 1
+refi_loan_row = r
+da.cell(row=r, column=1, value="NEW REFI LOAN AMOUNT (binding = minimum)").font = BOLD
+da.cell(row=r, column=2, value=f"=MIN(B{refi_ltv_row}:B{refi_dscr_row})").font = BOLD
+da.cell(row=r, column=2).number_format = USDC
+refi_loan_addr = f"'Debt (Assumed)'!$B${r}"
+r += 1
+refi_paydown_row = r
+da.cell(row=r, column=1, value="Cash Required / (Released) at Refinance = Payoff - New Loan")
+da.cell(row=r, column=2, value=f"=B{combined_payoff_row}-{refi_loan_addr}").number_format = USDC
+refi_paydown_addr = f"'Debt (Assumed)'!$B${r}"
+r += 2
+
+r = section(da, r, "POST-REFINANCE LOAN", span=1 + HOLD)
+pmt_refi_row = r
+da.cell(row=r, column=1, value="Annual P&I Payment (post-refi IO period)")
+da.cell(row=r, column=2, value=f"=-PMT({A['rate']},{A['amort_years']},{refi_loan_addr})").number_format = USDC
+pmt_refi_addr = f"'Debt (Assumed)'!$B${r}"
+r += 1
+rf_beg_row = r
+da.cell(row=r, column=1, value="Beginning Balance")
+for i, col in enumerate(DACOLS):
+    cl = get_column_letter(col)
+    prev = get_column_letter(col - 1) if i > 0 else None
+    f = (f"=IF({OPS}${cl}${yr_row}={mat}+1,{refi_loan_addr},"
+         f"IF({OPS}${cl}${yr_row}>{mat}+1,{prev}{r+3},0))")
+    da.cell(row=r, column=col, value=f).number_format = USDC
+r += 1
+rf_int_row = r
+da.cell(row=r, column=1, value="Interest")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}>{mat},{cl}{rf_beg_row}*{A['rate']},0)").number_format = USDC
+r += 1
+rf_prin_row = r
+da.cell(row=r, column=1, value="Principal (0 during post-refi IO window)")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    io_check = f"({OPS}${cl}${yr_row}-{mat})<={A['io_years']}"
+    da.cell(row=r, column=col,
+            value=f"=IF({OPS}${cl}${yr_row}>{mat},IF({io_check},0,{pmt_refi_addr}-{cl}{rf_int_row}),0)").number_format = USDC
+r += 1
+rf_end_row = r
+da.cell(row=r, column=1, value="Ending Balance")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}>{mat},{cl}{rf_beg_row}-{cl}{rf_prin_row},0)").number_format = USDC
+r += 2
+
+r = section(da, r, "COMBINED DEBT SERVICE BY YEAR (feeds Returns (Assumed))", span=1 + HOLD)
+tot_int_row = r
+da.cell(row=r, column=1, value="Total Interest")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"={cl}{f_int_row}+{cl}{s_int_row}+{cl}{rf_int_row}").number_format = USDC
+r += 1
+tot_prin_row = r
+da.cell(row=r, column=1, value="Total Principal")
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"={cl}{f_prin_row}+{cl}{s_prin_row}+{cl}{rf_prin_row}").number_format = USDC
+r += 1
+tot_ds_row = r
+da.cell(row=r, column=1, value="TOTAL DEBT SERVICE").font = BOLD
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"={cl}{tot_int_row}+{cl}{tot_prin_row}").font = BOLD
+    da.cell(row=r, column=col).number_format = USDC
+r += 1
+tot_end_row = r
+da.cell(row=r, column=1, value="TOTAL ENDING BALANCE").font = BOLD
+for col in DACOLS:
+    cl = get_column_letter(col)
+    da.cell(row=r, column=col, value=f"={cl}{f_end_row}+{cl}{s_end_row}+{cl}{rf_end_row}").font = BOLD
+    da.cell(row=r, column=col).number_format = USDC
+r += 2
+
+DA = dict(f_beg_row=f_beg_row, f_end_row=f_end_row, s_beg_row=s_beg_row, s_end_row=s_end_row,
+          combined_payoff_row=combined_payoff_row, refi_loan_addr=refi_loan_addr,
+          refi_paydown_addr=refi_paydown_addr, tot_ds_row=tot_ds_row, tot_end_row=tot_end_row,
+          DACOLS=DACOLS)
+print("Debt (Assumed) built through row", r)
+wb.save("model_wip.xlsx")
+
+# =====================================================================
+# 6c. RETURNS (ASSUMED) — Scenario A returns, same NOI trajectory as
+#     Scenario B, different debt (assumed loan + Year-3 refi).
+# =====================================================================
+ra = sheet("Returns (Assumed)")
+colwidths(ra, [38, 13] + [13] * HOLD)
+r = 1
+r = title(ra, r, "RETURNS (ASSUMED DEBT) — Scenario A, 5-Year Hold")
+ra.cell(row=r, column=1, value=(
+    "Same property, same NOI trajectory as the Scenario B (new-debt) Returns tab -- the only thing that "
+    "changes here is the debt.")).font = NOTE
+r += 2
+
+r = section(ra, r, "SOURCES & USES — SCENARIO A", span=2)
+a_fee_row = r
+ra.cell(row=r, column=1, value="Loan Assumption Fee")
+ra.cell(row=r, column=2, value=f"=({A['assum_first_bal']}+{A['assum_supp_bal']})*{A['assum_fee_pct']}").number_format = USDC
+a_fee_addr = f"'Returns (Assumed)'!$B${a_fee_row}"
+r += 1
+a_uses_row = r
+ra.cell(row=r, column=1, value="Total Uses (Scenario B uses + assumption fee)")
+ra.cell(row=r, column=2, value=f"={CAP['uses_total_addr']}+{a_fee_addr}").number_format = USDC
+a_uses_addr = f"'Returns (Assumed)'!$B${a_uses_row}"
+r += 1
+a_loan_row = r
+ra.cell(row=r, column=1, value="Assumed Debt (First + Supplemental, Year-0 balance)")
+ra.cell(row=r, column=2, value=f"={A['assum_first_bal']}+{A['assum_supp_bal']}").number_format = USDC
+a_loan_addr = f"'Returns (Assumed)'!$B${a_loan_row}"
+r += 1
+a_equity_row = r
+ra.cell(row=r, column=1, value="Sponsor Equity").font = BOLD
+ra.cell(row=r, column=2, value=f"={a_uses_addr}-{a_loan_addr}").font = BOLD
+ra.cell(row=r, column=2).number_format = USDC
+a_equity_addr = f"'Returns (Assumed)'!$B${a_equity_row}"
+r += 1
+ra.cell(row=r, column=1, value="  memo: vs. Scenario B equity")
+ra.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC
+r += 2
+
+r = section(ra, r, "EXIT (same NOI/exit-cap mechanics as Scenario B -- only the loan payoff differs)", span=2)
+a_exitprice_row = r
+ra.cell(row=r, column=1, value="Exit Price (same tax-adjusted formula as Scenario B)")
+ra.cell(row=r, column=2, value=f"={RET['exit_price_addr']}").number_format = USDC
+r += 1
+a_cos_row = r
+ra.cell(row=r, column=1, value="Less: Cost of Sale")
+ra.cell(row=r, column=2, value=f"=-B{a_exitprice_row}*{A['cost_of_sale_exit']}").number_format = USDC
+r += 1
+a_payoff_row = r
+ra.cell(row=r, column=1, value="Less: Loan Payoff (Debt (Assumed), Year-5 Total Ending Balance)")
+ra.cell(row=r, column=2, value=f"=-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}${DA['tot_end_row']}").number_format = USDC
+r += 1
+a_netproceeds_row = r
+ra.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY").font = BOLD
+ra.cell(row=r, column=2, value=f"=B{a_exitprice_row}+B{a_cos_row}+B{a_payoff_row}").font = BOLD
+ra.cell(row=r, column=2).number_format = USDC
+a_netproceeds_addr = f"'Returns (Assumed)'!$B${r}"
+r += 2
+
+r = section(ra, r, "CASH FLOWS ($) — Year 0 = closing, Years 1-5 = operations + exit in Year 5", span=2 + HOLD)
+hdr = r
+ra.cell(row=hdr, column=2, value="Year 0").font = BOLD
+for i, col in enumerate(RCOLS, start=1):
+    ra.cell(row=hdr, column=col, value=f"Year {i}").font = BOLD
+r += 1
+
+a_ucf_row = r
+ra.cell(row=r, column=1, value="Unlevered CF (same as Scenario B -- identical NOI/reserves/capex)")
+for i, col in enumerate(RCOLS):
+    opcol = get_column_letter(YEAR_COLS[i])
+    ra.cell(row=r, column=col, value=f"={OPS}${opcol}${OP['ucf_row']}").number_format = USDC
+r += 1
+a_ds_row = r
+ra.cell(row=r, column=1, value="Less: Debt Service (Debt (Assumed))")
+for i, col in enumerate(RCOLS):
+    dacol = get_column_letter(DA['DACOLS'][i])
+    ra.cell(row=r, column=col, value=f"=-'Debt (Assumed)'!{dacol}${DA['tot_ds_row']}").number_format = USDC
+r += 1
+a_refishort_row = r
+ra.cell(row=r, column=1, value="Less: Cash Required at Refinance (new loan < payoff balance; fires in the maturity year only)")
+for i, col in enumerate(RCOLS):
+    cl = get_column_letter(col)
+    yr_i = i + 1
+    ra.cell(row=r, column=col, value=f"=-IF({yr_i}={mat},{DA['refi_paydown_addr']},0)").number_format = USDC
+r += 1
+a_levops_row = r
+ra.cell(row=r, column=1, value="Levered CF from Operations")
+for col in RCOLS:
+    cl = get_column_letter(col)
+    ra.cell(row=r, column=col, value=f"={cl}{a_ucf_row}+{cl}{a_ds_row}+{cl}{a_refishort_row}").number_format = USDC
+r += 1
+a_levexit_row = r
+ra.cell(row=r, column=1, value="+ Net Sale Proceeds (Year 5 only)")
+for i, col in enumerate(RCOLS):
+    if i == HOLD - 1:
+        ra.cell(row=r, column=col, value=f"={a_netproceeds_addr}").number_format = USDC
+    else:
+        ra.cell(row=r, column=col, value=0).number_format = USDC
+r += 1
+a_levtotal_row = r
+ra.cell(row=r, column=1, value="TOTAL LEVERED CASH FLOW TO EQUITY").font = BOLD
+ra.cell(row=r, column=2, value=f"=-{a_equity_addr}").font = BOLD
+ra.cell(row=r, column=2).number_format = USDC
+for col in RCOLS:
+    cl = get_column_letter(col)
+    ra.cell(row=r, column=col, value=f"={cl}{a_levops_row}+{cl}{a_levexit_row}").font = BOLD
+    ra.cell(row=r, column=col).number_format = USDC
+r += 2
+
+r = section(ra, r, "RETURNS SUMMARY — SCENARIO A (assumed debt)", span=2)
+a_irr_row = r
+ra.cell(row=r, column=1, value="Levered IRR")
+a_lev_range = f"B{a_levtotal_row}:{get_column_letter(RCOLS[-1])}{a_levtotal_row}"
+ra.cell(row=r, column=2, value=f'=IFERROR(IRR({a_lev_range}),"N/A - no sign change / undefined")').number_format = PCT1
+r += 1
+a_em_row = r
+ra.cell(row=r, column=1, value="Levered Equity Multiple")
+ra.cell(row=r, column=2,
+        value=f"=SUM(C{a_levtotal_row}:{get_column_letter(RCOLS[-1])}{a_levtotal_row})/{a_equity_addr}").number_format = "0.00\"x\""
+r += 1
+a_coc1_row = r
+ra.cell(row=r, column=1, value="Year-1 Cash-on-Cash")
+ra.cell(row=r, column=2, value=f"=C{a_levops_row}/{a_equity_addr}").number_format = PCT1
+r += 2
+
+RA = dict(a_equity_addr=a_equity_addr, a_uses_addr=a_uses_addr, a_loan_addr=a_loan_addr,
+          a_levtotal_row=a_levtotal_row, a_irr_row=a_irr_row, a_em_row=a_em_row,
+          a_coc1_row=a_coc1_row, a_fee_addr=a_fee_addr, a_netproceeds_addr=a_netproceeds_addr)
+print("Returns (Assumed) built through row", r)
 wb.save("model_wip.xlsx")
 
 # =====================================================================
@@ -1293,7 +1785,17 @@ check_row("Loan - Cumulative Principal Paid - Year5 End Balance",
           f"={DEBT['loan_addr']}-SUM('Debt'!D{DEBT['amort_start']}:D{DEBT['amort_end']})-'Debt'!F{DEBT['amort_end']}")
 r += 1
 
-r = section(ck, r, "8. FORMULA ERROR SCAN", span=3)
+r = section(ck, r, "8. NOI BRIDGE TIES OUT (Day-0 + burn-off + capture = Year-1 Forward)", span=3)
+check_row("Bridge sum - Operating Model Year-1 NOI",
+          f"='Returns'!B{RET['b_y1_row']}-{noi_y1}")
+r += 1
+
+r = section(ck, r, "9. DEBT (ASSUMED) SCHEDULE INTERNAL CONSISTENCY (post-refi sub-loan)", span=3)
+check_row("Refi Loan - Cumulative Post-Refi Principal - Year5 Refi End Balance",
+          f"={DA['refi_loan_addr']}-SUM('Debt (Assumed)'!C{rf_prin_row}:{get_column_letter(DA['DACOLS'][-1])}{rf_prin_row})-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}{rf_end_row}")
+r += 1
+
+r = section(ck, r, "10. FORMULA ERROR SCAN", span=3)
 ck.cell(row=r, column=1, value="See Phase 3 verification report for a full-workbook #REF!/#DIV/0!/#VALUE!/#NAME? scan (done via LibreOffice headless recalculation + openpyxl re-read, not a formula on this tab).").font = NOTE
 r += 2
 
@@ -1326,9 +1828,12 @@ sm.cell(row=r, column=1, value="  LP Equity (90%)"); sm.cell(row=r, column=2, va
 sm.cell(row=r, column=1, value="  GP Equity (10%)"); sm.cell(row=r, column=2, value=f"={CAP['gp_eq_addr']}").number_format = USDC; r += 2
 
 r = section(sm, r, "KEY METRICS", span=2)
-sm.cell(row=r, column=1, value="Broker-Stated Cap Rate"); sm.cell(row=r, column=2, value=f"={A['broker_cap']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Going-In Cap Rate (Year-1 model NOI, reassessed tax)"); sm.cell(row=r, column=2, value=f"={RET['entry_cap_addr']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Exit Cap Rate (base case, entry+50bps)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="1. Broker-Stated Cap Rate (seller's current tax basis)"); sm.cell(row=r, column=2, value=f"={A['broker_cap']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, reassessed tax (true going-in)").font = BOLD
+sm.cell(row=r, column=2, value=f"={RET['cap_inplace_addr']}").font = BOLD
+sm.cell(row=r, column=2).number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr business plan -- used for exit-spread convention below)"); sm.cell(row=r, column=2, value=f"={RET['entry_cap_addr']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Exit Cap Rate (base case, Year-1-Forward basis + 50bps -- see NOI Bridge on Returns tab)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Loan-to-Value"); sm.cell(row=r, column=2, value=f"='Debt'!C{DEBT['loan_row']}/{A['price']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Binding Debt Constraint"); sm.cell(row=r, column=2, value=f"='Debt'!C{DEBT['bind_row']}"); r += 1
 sm.cell(row=r, column=1, value="Hold Period"); sm.cell(row=r, column=2, value=f"={A['hold_years']}").number_format = "0 \"years\""; r += 2
@@ -1342,6 +1847,35 @@ sm.cell(row=r, column=1, value="LP IRR"); sm.cell(row=r, column=2, value=f"='Wat
 sm.cell(row=r, column=1, value="LP Equity Multiple"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_mult_row']}").number_format = "0.00\"x\""; r += 1
 sm.cell(row=r, column=1, value="GP IRR"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_irr_row']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="GP Equity Multiple"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_mult_row']}").number_format = "0.00\"x\""; r += 2
+
+r = section(sm, r, "DEBT SCENARIO COMPARISON — neither is the base case; deal-level (pre-promote) returns", span=3)
+sm.cell(row=r, column=2, value="B: New Debt (generic)").font = BOLD
+sm.cell(row=r, column=3, value="A: Assumed Debt").font = BOLD
+r += 1
+sm.cell(row=r, column=1, value="Year-0 Loan Amount")
+sm.cell(row=r, column=2, value=f"={DEBT['loan_addr']}").number_format = USDC
+sm.cell(row=r, column=3, value=f"={RA['a_loan_addr']}").number_format = USDC
+r += 1
+sm.cell(row=r, column=1, value="Rate")
+sm.cell(row=r, column=2, value=f"={A['rate']}").number_format = PCT1
+sm.cell(row=r, column=3, value=f"={A['assum_blended_rate']}").number_format = PCT1
+r += 1
+sm.cell(row=r, column=1, value="Sponsor Equity Required")
+sm.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC
+sm.cell(row=r, column=3, value=f"={RA['a_equity_addr']}").number_format = USDC
+r += 1
+sm.cell(row=r, column=1, value="Levered IRR (deal-level)")
+sm.cell(row=r, column=2, value=f"='Returns'!B{RET['lev_irr_row']}").number_format = PCT1
+sm.cell(row=r, column=3, value=f"='Returns (Assumed)'!B{RA['a_irr_row']}").number_format = PCT1
+r += 1
+sm.cell(row=r, column=1, value="Levered Equity Multiple (deal-level)")
+sm.cell(row=r, column=2, value=f"='Returns'!B{RET['lev_em_row']}").number_format = "0.00\"x\""
+sm.cell(row=r, column=3, value=f"='Returns (Assumed)'!B{RA['a_em_row']}").number_format = "0.00\"x\""
+r += 1
+sm.cell(row=r, column=1, value="Year-1 Cash-on-Cash")
+sm.cell(row=r, column=2, value=f"='Returns'!C{RET['lev_before_exit_row']}/'Returns'!B{RET['inv_row']}").number_format = PCT1
+sm.cell(row=r, column=3, value=f"='Returns (Assumed)'!B{RA['a_coc1_row']}").number_format = PCT1
+r += 2
 
 r = section(sm, r, "DEAL THESIS", span=2)
 sm.cell(row=r, column=1, value=(
