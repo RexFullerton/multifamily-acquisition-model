@@ -24,6 +24,7 @@ STEPS = [
     ("no_prepay", "D2. Prepayment premium at sale (Fannie declining schedule)"),
     ("no_paydown", "D3. Assumption paydown test (75% max LTV on price)"),
     ("classic_bug", "Bug fix: renovated classic units reach market rent from Year 2"),
+    ("plan10", "E. Exit plan: short floating refi + 2-yr cap (was 10-yr fixed repaid in loan yr 2)"),
 ]
 
 
@@ -36,7 +37,8 @@ def run():
         m = V.run_model(I, legacy=tuple(legacy))
         A, B = m["A"], m["B"]
         row = dict(label=label, a_irr=A["irr"], a_em=A["em"], b_irr=B["irr"], unlev=m["unlev_irr"],
-                   noi1=m["noi"][0], exit_cap=m["exit_cap"], call=A["capital_call"], refi=A["refi_loan"],
+                   noi1=m["noi"][0], exit_cap=m["exit_cap"], call=A["capital_call"],
+                   refi=A["plans"][A["plan_key"]].get("loan", 0.0),
                    delta=None if prev is None else A["irr"] - prev)
         rows.append(row)
         prev = A["irr"]

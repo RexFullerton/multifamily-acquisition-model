@@ -128,6 +128,15 @@ def load_inputs(path):
     I["io_years"] = inp("Interest-Only Period (years)")
     I["amort_years"] = inp("Amortization (years)")
     I["prepay"] = [inp(f"Prepayment Premium, Loan Year {i}", exact=True) for i in range(1, 11)]
+    I["ust5"] = inp("5-Year Treasury Yield")
+    I["prepay5"] = [inp(f"5-Year Fixed Prepayment Premium, Loan Year {i}", exact=True) for i in range(1, 6)]
+    I["sofr30"] = inp("30-Day Average SOFR")
+    I["float_spread"] = inp("Floating Spread over 30-Day Average SOFR")
+    I["cap_strike"] = inp("Rate Cap Strike")
+    I["cap_cost_pct"] = inp("2-Year Rate Cap Premium")
+    I["float_io"] = inp("Floating Refi Interest-Only")
+    I["float_prepay"] = inp("Floating Refi Prepayment Premium at Sale")
+    I["a_plan"] = inp("Scenario A Exit Plan")
     I["a_first_bal"] = inp("First Mortgage Balance")
     I["a_first_rate"] = inp("First Mortgage Rate")
     I["a_mat"] = int(inp("First Mortgage Maturity"))
@@ -244,7 +253,7 @@ def waterfall(lev_cf, equity, I):
 # ones in commit efb3da1's Assumptions tab.
 LEGACY_INPUTS = dict(other_income_mo=35.0, contract_svc=450.0, rate=0.0385 + 0.0325, ltv=0.65, min_dy=0.08,
                      io_years=2, exit_spread=0.005)
-LEGACY_FLAGS = ("classic_bug", "tax10", "util_old", "exit_old", "debt_old", "no_prepay", "no_paydown")
+LEGACY_FLAGS = ("classic_bug", "tax10", "util_old", "exit_old", "debt_old", "no_prepay", "no_paydown", "plan10")
 
 
 def run_model(I, price=None, exit_cap=None, legacy=()):
@@ -449,47 +458,93 @@ def run_model(I, price=None, exit_cap=None, legacy=()):
                 beg.append(0.0); int_.append(0.0); prin.append(0.0); end.append(0.0)
         A[key] = dict(beg=beg, int=int_, prin=prin, end=end)
     A["payoff"] = A["first"]["end"][mat - 1] + A["supp"]["end"][mat - 1]
-    A["refi_noi"] = m["noi"][mat]  # year mat+1
-    A["refi_value"] = A["refi_noi"] / m["exit_cap"]  # lender appraisal proxy: in-place NOI / market cap
-    A["refi_loan"], legs, A["refi_binding"] = size(A["refi_noi"], A["refi_value"])
-    A["refi_ltv"], A["refi_dscr"], A["refi_dy"] = legs["LTV"], legs["DSCR"], legs.get("Debt Yield")
-    A["refi_paydown"] = A["payoff"] - A["refi_loan"]
-    A["refi_pmt"] = _pmt(rate, am, A["refi_loan"])
-    beg, int_, prin, end = [], [], [], []
-    bal = 0.0
-    for y in range(1, HOLD + 1):
-        if y > mat:
-            if y == mat + 1:
-                bal = A["refi_loan"]
-            i_ = bal * rate
-            p_ = 0.0 if (y - mat) <= io else A["refi_pmt"] - i_
-            beg.append(bal); int_.append(i_); prin.append(p_)
-            bal -= p_
-            end.append(bal)
-        else:
-            beg.append(0.0); int_.append(0.0); prin.append(0.0); end.append(0.0)
-    A["refi"] = dict(beg=beg, int=int_, prin=prin, end=end)
-    A["tot_int"] = [A["first"]["int"][y] + A["supp"]["int"][y] + A["refi"]["int"][y] for y in range(HOLD)]
-    A["tot_prin"] = [A["first"]["prin"][y] + A["supp"]["prin"][y] + A["refi"]["prin"][y] for y in range(HOLD)]
-    A["tot_ds"] = [A["tot_int"][y] + A["tot_prin"][y] for y in range(HOLD)]
-    A["tot_end"] = [A["first"]["end"][y] + A["supp"]["end"][y] + A["refi"]["end"][y] for y in range(HOLD)]
+    pre_ds = [A["first"]["int"][y] + A["first"]["prin"][y] + A["supp"]["int"][y] + A["supp"]["prin"][y] for y in range(HOLD)]
     A["loan"] = first0 + supp0
     A["fee"] = A["loan"] * I["a_fee_pct"]
     A["uses"] = m["uses_b"] + A["fee"]
     A["equity"] = A["uses"] - A["loan"]
     A["lp_eq"], A["gp_eq"] = A["equity"] * (1 - I["gp_coinvest"]), A["equity"] * I["gp_coinvest"]
-    A["payoff_exit"] = -A["tot_end"][-1]
-    A["prepay_pct"] = prepay_pct(HOLD - mat) if HOLD > mat else 0.0  # refi loan is in loan year HOLD-mat at sale
-    A["prepay"] = -A["refi"]["end"][-1] * A["prepay_pct"]
-    A["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + A["payoff_exit"] + A["prepay"]
-    A["refi_short"] = [-(A["refi_paydown"] if (y + 1) == mat else 0.0) for y in range(HOLD)]
-    A["lev_ops"] = [m["ucf"][y] - A["tot_ds"][y] + A["refi_short"][y] for y in range(HOLD)]
-    A["lev_cf"] = [-A["equity"]] + list(A["lev_ops"])
-    A["lev_cf"][HOLD] += A["net_proceeds"]
-    A["irr"], A["em"] = _irr(A["lev_cf"]), sum(A["lev_cf"][1:]) / A["equity"]
+    A["refi_noi"] = m["noi"][mat]  # NOI of the first post-maturity year
+    A["refi_value"] = A["refi_noi"] / m["exit_cap"]  # lender appraisal proxy: in-place NOI / market cap
+
+    def finish(pl):
+        """Common tail for every exit plan: equity, IRR, multiple, capital call."""
+        pl["lev_cf"] = [-A["equity"]] + list(pl["lev_ops"])
+        pl["lev_cf"][pl["sale_year"]] += pl["net_proceeds"]
+        pl["irr"], pl["em"] = _irr(pl["lev_cf"]), sum(pl["lev_cf"][1:]) / A["equity"]
+        pl["capital_call"] = max(0.0, -min(pl["lev_ops"][:pl["sale_year"]]))
+        pl["peak_equity"] = A["equity"] + pl["capital_call"]
+        return pl
+
+    # Plan 1 -- sell when the 3.0% loan matures (end of Year `mat`), priced on Year mat+1 NOI
+    sale = dict(sale_year=mat)
+    sale["exit_price"] = m["noi_pretax"][mat] / (m["exit_cap"] + m["eff_tax_exit"])
+    sale["cost_of_sale"] = -sale["exit_price"] * I["cos_exit"]
+    sale["payoff"] = -A["payoff"]
+    sale["net_proceeds"] = sale["exit_price"] + sale["cost_of_sale"] + sale["payoff"]
+    sale["lev_ops"] = [(m["ucf"][y] - pre_ds[y]) if (y + 1) <= mat else 0.0 for y in range(HOLD)]
+    finish(sale)
+
+    # Refinance variants at maturity, held to the Year-HOLD sale
+    def refi_plan(rate_, size_rate, io_yrs, upfront_pct, prepay_at_sale, legacy_size=False):
+        pl = dict(sale_year=HOLD, rate=rate_, size_rate=size_rate)
+        if legacy_size:
+            pl["loan"], legs, pl["binding"] = size(A["refi_noi"], A["refi_value"])
+        else:
+            legs = {"LTV": A["refi_value"] * I["ltv"],
+                    "DSCR": A["refi_noi"] / (I["min_dscr"] * _pmt(size_rate, am, 1.0))}
+            pl["loan"] = min(legs.values())
+            pl["binding"] = next(k for k, v in legs.items() if v == pl["loan"])
+        pl["ltv_leg"], pl["dscr_leg"] = legs["LTV"], legs["DSCR"]
+        pl["pmt"] = _pmt(rate_, am, pl["loan"])
+        pl["upfront"] = pl["loan"] * upfront_pct  # rate-cap premium, paid at the refinance closing
+        pl["cash_required"] = A["payoff"] - pl["loan"] + pl["upfront"]
+        beg, int_, prin, end_ = [], [], [], []
+        bal = 0.0
+        for y in range(1, HOLD + 1):
+            if y > mat:
+                if y == mat + 1:
+                    bal = pl["loan"]
+                i_ = bal * rate_
+                p_ = 0.0 if (y - mat) <= io_yrs else pl["pmt"] - i_
+                beg.append(bal); int_.append(i_); prin.append(p_)
+                bal -= p_
+                end_.append(bal)
+            else:
+                beg.append(0.0); int_.append(0.0); prin.append(0.0); end_.append(0.0)
+        pl.update(beg=beg, int=int_, prin=prin, end=end_)
+        pl["ds"] = [pre_ds[y] + int_[y] + prin[y] for y in range(HOLD)]
+        pl["prepay_pct"] = prepay_at_sale
+        pl["prepay"] = -end_[-1] * prepay_at_sale
+        pl["exit_price"], pl["cost_of_sale"] = m["exit_price"], m["cost_of_sale"]
+        pl["payoff"] = -end_[-1]
+        pl["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + pl["payoff"] + pl["prepay"]
+        pl["lev_ops"] = [m["ucf"][y] - pl["ds"][y] - (pl["cash_required"] if (y + 1) == mat else 0.0) for y in range(HOLD)]
+        # financing cost over the refi loan's life in the hold: interest + cap premium + prepayment premium
+        pl["fin_cost"] = sum(int_) + pl["upfront"] - pl["prepay"]
+        pl["fin_cost_pct_yr"] = pl["fin_cost"] / pl["loan"] / (HOLD - mat)
+        return finish(pl)
+
+    loan_yr_at_sale = HOLD - mat
+    old_debt = "debt_old" in L
+    plans = {"sale": sale}
+    # Short refi (a): floating, 30-day Average SOFR + spread, priced rate cap, sized on the capped rate
+    plans["float"] = refi_plan(I["sofr30"] + I["float_spread"], I["cap_strike"] + I["float_spread"],
+                               HOLD if I["float_io"] == 1 else 0, I["cap_cost_pct"], I["float_prepay"])
+    # Short refi (b): 5-year agency fixed, 5-yr UST + agency spread, 5-4-3-2-1 declining premium
+    plans["fixed5"] = refi_plan(I["ust5"] + I["agency_spread"], I["ust5"] + I["agency_spread"], io, 0.0,
+                                I["prepay5"][loan_yr_at_sale - 1])
+    # Comparison only: 10-year agency fixed (the prior structure), 10-yr declining premium
+    plans["fixed10"] = refi_plan(rate, rate, io, 0.0, prepay_pct(loan_yr_at_sale), legacy_size=old_debt)
+    A["plans"] = plans
+    A["short_choice"] = "float" if plans["float"]["fin_cost_pct_yr"] <= plans["fixed5"]["fin_cost_pct_yr"] else "fixed5"
+    plan_code = 3 if "plan10" in L else int(I["a_plan"])
+    A["plan_code"] = plan_code
+    A["plan_key"] = {1: "sale", 2: A["short_choice"], 3: "fixed10"}[plan_code]
+    sel = plans[A["plan_key"]]
+    for k in ("lev_ops", "lev_cf", "irr", "em", "capital_call", "peak_equity", "net_proceeds", "sale_year"):
+        A[k] = sel[k]
     A["coc1"] = A["lev_ops"][0] / A["equity"]
-    A["capital_call"] = max(0.0, -min(A["lev_ops"]))  # largest single-year shortfall funded by investors
-    A["peak_equity"] = A["equity"] + A["capital_call"]
 
     # ---- Waterfalls (pari passu investor capital + GP promote), both scenarios
     W = waterfall(A["lev_cf"], A["equity"], I)
@@ -531,6 +586,12 @@ class Comparator:
 
     def scalar(self, sheet, label, mine, col=2, tol=TOL_USD, exact=False, after=None):
         self.series(sheet, label, [mine], [col], tol=tol, exact=exact, after=after)
+
+    def text_after(self, sheet, label, mine, after, col=2):
+        ws = self.ws(sheet)
+        theirs = ws.cell(row=_find_row(ws, label, start=_find_row(ws, after) + 1), column=col).value
+        self.rows.append((sheet, label, 0.0 if theirs == mine else float("inf"), 0, 1, theirs == mine,
+                          (0, mine, theirs, 0)))
 
     def text(self, sheet, label, mine, col=2):
         ws = self.ws(sheet)
@@ -648,27 +709,42 @@ def compare(path, I, m):
     C.scalar(DA, "Required Paydown at Closing", A["assume_paydown"])
     C.scalar(DA, "First Mortgage Balance Assumed", A["loan"] - (I["a_supp_bal"] - A["paydown_supp"]))
     C.scalar(DA, "Supplemental Balance Assumed", I["a_supp_bal"] - A["paydown_supp"])
-    for sect, key in [("FIRST MORTGAGE", "first"), ("SUPPLEMENTAL LOAN", "supp"), ("POST-REFINANCE LOAN", "refi")]:
+    for sect, key in [("FIRST MORTGAGE", "first"), ("SUPPLEMENTAL LOAN", "supp")]:
         C.series(DA, "Beginning Balance", A[key]["beg"], D5, after=sect)
         C.series(DA, "Interest", A[key]["int"], D5, exact=True, after=sect)
         C.series(DA, "Principal", A[key]["prin"], D5, after=sect)
         C.series(DA, "Ending Balance", A[key]["end"], D5, after=sect)
-        C.rows[-4:] = [(s, f"{key}: {l}", d, t, n, ok, w) for (s, l, d, t, n, ok, w) in C.rows[-4:]]
-    C.scalar(DA, "Payoff Balance", A["payoff"])
-    C.scalar(DA, "NOI in the refinance year", A["refi_noi"])
+        C.rows[-4:] = [(s_, f"{key}: {l}", d, t, n, ok, w) for (s_, l, d, t, n, ok, w) in C.rows[-4:]]
+    pre_ds = [A["first"]["int"][y] + A["first"]["prin"][y] + A["supp"]["int"][y] + A["supp"]["prin"][y] for y in range(HOLD)]
+    C.series(DA, "Assumed Loans Debt Service", pre_ds, D5)
+    C.scalar(DA, "Payoff Balance at Maturity", A["payoff"])
+    C.scalar(DA, "NOI in the first post-maturity year", A["refi_noi"])
     C.scalar(DA, "Value at Refinance", A["refi_value"])
-    C.scalar(DA, "New Loan — LTV constraint", A["refi_ltv"])
-    C.scalar(DA, "New Loan — DSCR constraint", A["refi_dscr"])
-    C.scalar(DA, "NEW REFI LOAN AMOUNT", A["refi_loan"])
-    C.scalar(DA, "Cash Required / (Released) at Refinance", A["refi_paydown"])
-    C.scalar(DA, "Annual P&I Payment (post-refi", A["refi_pmt"])
-    C.scalar(DA, "Refi Loan Prepayment Premium %", A["prepay_pct"], tol=TOL_RATE)
-    C.series(DA, "Total Interest", A["tot_int"], D5)
-    C.series(DA, "Total Principal", A["tot_prin"], D5)
-    C.series(DA, "TOTAL DEBT SERVICE", A["tot_ds"], D5)
-    C.series(DA, "TOTAL ENDING BALANCE", A["tot_end"], D5)
+    for key, sect in [("float", "REFI OPTION 2a"), ("fixed5", "REFI OPTION 2b"), ("fixed10", "COMPARISON ONLY — 10-YEAR")]:
+        pl = A["plans"][key]
+        n0 = len(C.rows)
+        C.scalar(DA, "All-in rate", pl["rate"], tol=TOL_RATE, after=sect)
+        C.scalar(DA, "Sizing rate for the DSCR test", pl["size_rate"], tol=TOL_RATE, after=sect)
+        C.scalar(DA, "Loan — LTV constraint", pl["ltv_leg"], after=sect)
+        C.scalar(DA, "Loan — DSCR constraint", pl["dscr_leg"], after=sect)
+        C.scalar(DA, "REFI LOAN AMOUNT", pl["loan"], after=sect)
+        C.text_after(DA, "Binding constraint", pl["binding"], sect)
+        C.scalar(DA, "Annual P&I payment", pl["pmt"], after=sect)
+        C.scalar(DA, "Upfront cost at refinance", pl["upfront"], after=sect)
+        C.scalar(DA, "Cash Required at Refinance", pl["cash_required"], after=sect)
+        C.series(DA, "Refi Loan Beginning Balance", pl["beg"], D5, after=sect)
+        C.series(DA, "Refi Loan Interest", pl["int"], D5, after=sect)
+        C.series(DA, "Refi Loan Principal", pl["prin"], D5, after=sect)
+        C.series(DA, "Refi Loan Ending Balance", pl["end"], D5, after=sect)
+        C.series(DA, "TOTAL DEBT SERVICE", pl["ds"], D5, after=sect)
+        C.scalar(DA, "Prepayment premium % at the Year-5 sale", pl["prepay_pct"], tol=TOL_RATE, after=sect)
+        C.scalar(DA, "Prepayment premium $ at sale", -pl["prepay"], after=sect)
+        C.scalar(DA, "Financing cost over the refi", pl["fin_cost"], after=sect)
+        C.scalar(DA, "Financing cost, % of loan per year", pl["fin_cost_pct_yr"], tol=TOL_RATE, after=sect)
+        C.rows[n0:] = [(s_, f"{key}: {l}", d, t, n, ok, w) for (s_, l, d, t, n, ok, w) in C.rows[n0:]]
+    C.scalar(DA, "Short-refi choice", 1 if A["short_choice"] == "float" else 2, tol=0)
 
-    # Scenario A -- Returns (Assumed)
+    # Scenario A -- Returns (Assumed): sources & uses, each exit plan, selected base case
     RA = "Returns (Assumed)"
     C.scalar(RA, "Loan Assumption Fee", A["fee"])
     C.scalar(RA, "Total Uses (Scenario B uses + assumption fee)", A["uses"])
@@ -676,23 +752,39 @@ def compare(path, I, m):
     C.scalar(RA, "Sponsor Equity", A["equity"], exact=True)
     C.scalar(RA, "LP Equity (90%)", A["lp_eq"])
     C.scalar(RA, "GP Equity (10%", A["gp_eq"])
-    C.scalar(RA, "Exit Price (same tax-adjusted", m["exit_price"])
-    C.scalar(RA, "Less: Cost of Sale", m["cost_of_sale"])
-    C.scalar(RA, "Less: Loan Payoff (Debt (Assumed)", A["payoff_exit"])
-    C.scalar(RA, "Less: Prepayment Premium on refinance loan", A["prepay"])
     C.scalar(RA, "memo: required paydown at assumption", A["assume_paydown"])
-    C.scalar(RA, "NET SALE PROCEEDS TO EQUITY — SCENARIO A", A["net_proceeds"])
     C.series(RA, "Unlevered CF (same as Scenario B", [m["ucf"][y] for y in range(HOLD)], Y5)
-    C.series(RA, "Less: Debt Service (Debt (Assumed))", [-x for x in A["tot_ds"]], Y5)
-    C.series(RA, "Less: Cash Required at Refinance", A["refi_short"], Y5)
-    C.series(RA, "Levered CF from Operations", A["lev_ops"], Y5, exact=True)
+    sale = A["plans"]["sale"]
+    n0 = len(C.rows)
+    C.scalar(RA, "Exit price = Year-4 NOI before tax", sale["exit_price"], after="PLAN 1")
+    C.scalar(RA, "Less: cost of sale", sale["cost_of_sale"], after="PLAN 1")
+    C.scalar(RA, "Less: payoff of the assumed loans at maturity", sale["payoff"], after="PLAN 1")
+    C.scalar(RA, "Net sale proceeds at maturity", sale["net_proceeds"], after="PLAN 1")
+    C.rows[n0:] = [(s_, f"sale: {l}", d, t, n, ok, w) for (s_, l, d, t, n, ok, w) in C.rows[n0:]]
+    for key, sect in [("sale", "PLAN 1"), ("float", "PLAN 2a"), ("fixed5", "PLAN 2b"), ("fixed10", "PLAN 3")]:
+        pl = A["plans"][key]
+        n0 = len(C.rows)
+        if key != "sale":
+            C.scalar(RA, "Less: refi loan payoff", pl["payoff"], after=sect)
+            C.scalar(RA, "Less: prepayment premium", pl["prepay"], after=sect)
+            C.scalar(RA, "Net sale proceeds (Year 5)", pl["net_proceeds"], after=sect)
+        C.series(RA, "Levered CF from operations", pl["lev_ops"], Y5, after=sect)
+        C.series(RA, "Total levered cash flow to equity", pl["lev_cf"], Y05, after=sect)
+        C.scalar(RA, "Levered IRR", pl["irr"], tol=TOL_RATE, after=sect)
+        C.scalar(RA, "Levered equity multiple", pl["em"], tol=TOL_RATE, after=sect)
+        C.scalar(RA, "Capital call", pl["capital_call"], after=sect)
+        C.scalar(RA, "Peak equity", pl["peak_equity"], after=sect)
+        C.rows[n0:] = [(s_, f"{key}: {l}", d, t, n, ok, w) for (s_, l, d, t, n, ok, w) in C.rows[n0:]]
+    labels = {"sale": "1. Sell at maturity", "float": "2a. Short refi: floating + cap", "fixed5": "2b. Short refi: 5-yr fixed",
+              "fixed10": "3. 10-yr fixed refi (comparison)"}
+    C.text(RA, "Exit plan in the base case", labels[A["plan_key"]])
+    C.series(RA, "Levered CF from Operations", A["lev_ops"], Y5, exact=True, after="SELECTED BASE CASE")
     C.series(RA, "TOTAL LEVERED CASH FLOW TO EQUITY — SCENARIO A", A["lev_cf"], Y05)
     C.scalar(RA, "Levered IRR — SCENARIO A", A["irr"], tol=TOL_RATE)
     C.scalar(RA, "Levered Equity Multiple — SCENARIO A", A["em"], tol=TOL_RATE)
     C.scalar(RA, "Year-1 Cash-on-Cash — SCENARIO A", A["coc1"], tol=TOL_RATE)
     C.scalar(RA, "Capital Call Required", A["capital_call"])
     C.scalar(RA, "PEAK EQUITY — SCENARIO A", A["peak_equity"])
-
     # Waterfall (Scenario A), tier by tier -- engine uses a different (closed-form) method
     WF = "Waterfall"
     C.series(WF, "Available Cash for Distribution", W["avail"], Y5)
