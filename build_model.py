@@ -88,7 +88,7 @@ ws.cell(row=r, column=1, value="Blue = input. Black = formula. Every number else
 r += 2
 
 r = section(ws, r, "ACQUISITION")
-A['units'] = inp(ws, r, "Units", 97, "0", "LoopNet listing"); r += 1
+A['units'] = frm(ws, r, "Units (formula = Unit Mix total, not an input)", 0, "0", "Single source of truth: sums the Unit Mix tab. Listing is internally inconsistent -- LoopNet headline says 97, but the unit-type breakdown in both LoopNet and Crexi marketing text (19 studios + 52 1BR/1BA + 17 2BR/1BA + 10 2BR/2BA) sums to 98. Model uses 98 because the rent roll is built on that breakdown. DILIGENCE ITEM: confirm against the actual rent roll."); r += 1
 A['price'] = inp(ws, r, "Purchase Price ($)", 13800000, USDC, "Broker-stated asking price (LoopNet)"); r += 1
 A['broker_cap'] = inp(ws, r, "Broker-Stated Cap Rate", 0.07, PCT1, "LoopNet advertised cap rate"); r += 1
 A['broker_noi'] = frm(ws, r, "Broker-Implied NOI ($)", f"={A['price']}*{A['broker_cap']}", USDC, "i.e. Price x Broker Cap (not used downstream)"); r += 1
@@ -210,7 +210,7 @@ A['assum_fee_pct'] = inp(ws, r, "Loan Assumption Fee (% of assumed balance)", 0.
 r += 1
 
 r = section(ws, r, "HOLD & EXIT")
-A['hold_years'] = inp(ws, r, "Hold Period (years)", 5, "0"); r += 1
+A['hold_years'] = frm(ws, r, "Hold Period (years) -- STRUCTURAL, not a live input", 5, "0", "The model is built for a 5-year hold (5 cash-flow columns, exit on Year-6 forward NOI). Changing this cell does NOT change the model -- shown black, not blue, for that reason."); r += 1
 A['exit_spread_base'] = inp(ws, r, "Exit Cap Spread over Entry — Base Case (bps)", 0.005, PCT1, "per instruction: entry + 50bps"); r += 1
 A['exit_spread_sens'] = inp(ws, r, "Exit Cap Spread over Entry — Sensitivity Ceiling (bps)", 0.010, PCT1, "per instruction: sensitivity extends to +100bps"); r += 1
 A['cost_of_sale_exit'] = inp(ws, r, "Cost of Sale at Exit (%)", 0.02, PCT1); r += 1
@@ -233,7 +233,7 @@ print("Assumptions built through row", r)
 um = sheet("Unit Mix")
 colwidths(um, [16, 11, 11, 11, 9, 13, 15, 13])
 r = 1
-r = title(um, r, "UNIT MIX / RENT ROLL — 97 units")
+r = title(um, r, "UNIT MIX / RENT ROLL — 98 units (see Assumptions note on the listing's 97 vs. 98 discrepancy)")
 um.cell(row=r, column=1, value="75% of units already renovated by prior owner (LoopNet/Crexi). Classic-unit counts below are a proportional allocation of that disclosed 75/25 split across unit types — judgment, not unit-type-level disclosed data.").font = NOTE
 r += 2
 
@@ -300,6 +300,9 @@ UM['classic_total_addr'] = f"'Unit Mix'!$C${total_row}"
 r += 2
 
 print("Unit Mix built through row", r, "| reno total:", UM['reno_total_addr'])
+_units_cell = A['units'].split('!')[1].replace('$', '')
+wb["Assumptions"][_units_cell] = f"='Unit Mix'!$B${UM['total_row']}"
+wb["Assumptions"][_units_cell].font = BOLD
 
 # =====================================================================
 # 3. OPERATING MODEL (annual, 10 years)
@@ -309,7 +312,7 @@ NYEARS = 10
 YEAR_COLS = list(range(2, 2 + NYEARS))  # B..K
 colwidths(op, [34] + [11] * NYEARS)
 r = 1
-r = title(op, r, "OPERATING MODEL — Annual, 10 Years")
+r = title(op, r, "OPERATING MODEL — Annual, 10 Years (property-level, debt-agnostic: identical under Scenario A and B)")
 r += 1
 
 yr_row = r
@@ -380,8 +383,19 @@ for idx, row_i in enumerate(UM['rows']):
 r += 1
 
 r = section(op, r, "INCOME", span=1 + NYEARS)
+market_gpr_row = r
+ltl_row = r + 1
+op.cell(row=market_gpr_row, column=1, value="Gross Potential Rent at Market (all units at market rent)").font = BOLD
+op.cell(row=ltl_row, column=1, value="Less: Loss-to-Lease (in-place below market; net of renovation premium)")
+for col in YEAR_COLS:
+    cl = get_column_letter(col)
+    mterms = [f"'Unit Mix'!$B${tb['row_i']}*{cl}{tb['market']}" for tb in type_blocks]
+    op.cell(row=market_gpr_row, column=col, value="=(" + "+".join(mterms) + ")*12").number_format = USDC
+    op.cell(row=market_gpr_row, column=col).font = BOLD
+    op.cell(row=ltl_row, column=col, value=f"={cl}{ltl_row + 1}-{cl}{market_gpr_row}").number_format = USDC
+r += 2
 gpr_row = r
-op.cell(row=gpr_row, column=1, value="Gross Potential Rent (GPR)").font = BOLD
+op.cell(row=gpr_row, column=1, value="Gross Scheduled Rent (Market GPR less Loss-to-Lease)").font = BOLD
 for col in YEAR_COLS:
     cl = get_column_letter(col)
     terms = []
@@ -424,7 +438,8 @@ for col in YEAR_COLS:
     op.cell(row=r, column=col, value=f"=SUM({cl}{gpr_row}:{cl}{oi_row})").number_format = USDC
     op.cell(row=r, column=col).font = BOLD
 r += 1
-OP.update(gpr_row=gpr_row, egi_row=egi_row)
+OP.update(gpr_row=gpr_row, egi_row=egi_row, market_gpr_row=market_gpr_row, ltl_row=ltl_row,
+          vac_row=vac_row, cl_row=cl_row, con_row=con_row, oi_row=oi_row)
 r += 1
 
 r = section(op, r, "OPERATING EXPENSES", span=1 + NYEARS)
@@ -536,7 +551,7 @@ noi_y1 = f"{OPS}${get_column_letter(YEAR_COLS[0])}${OP['noi_row']}"
 db = sheet("Debt")
 colwidths(db, [34, 13, 13, 13, 13, 13])
 r = 1
-r = title(db, r, "DEBT — sized explicitly on the binding constraint (no circularity, no iteration)")
+r = title(db, r, "DEBT — SCENARIO B (ALTERNATIVE): new acquisition debt, sized on the binding constraint (no circularity)")
 r += 1
 
 r = section(db, r, "SIZING", span=3)
@@ -596,12 +611,9 @@ for y in range(1, 6):
     else:
         db.cell(row=r, column=2, value=f"=F{r-1}").number_format = USDC
     db.cell(row=r, column=3, value=f"=B{r}*{A['rate']}").number_format = USDC
-    if y <= 2:
-        db.cell(row=r, column=4, value=0).number_format = USDC
-        db.cell(row=r, column=5, value=f"=C{r}").number_format = USDC
-    else:
-        db.cell(row=r, column=4, value=f"={pi_addr}-C{r}").number_format = USDC
-        db.cell(row=r, column=5, value=f"={pi_addr}").number_format = USDC
+    # IO period read from Assumptions (was a hardcoded 2 -- a typed number in a formula tab)
+    db.cell(row=r, column=4, value=f"=IF(A{r}<={A['io_years']},0,{pi_addr}-C{r})").number_format = USDC
+    db.cell(row=r, column=5, value=f"=C{r}+D{r}").number_format = USDC
     db.cell(row=r, column=6, value=f"=B{r}-D{r}").number_format = USDC
     r += 1
 amort_end = r - 1
@@ -618,7 +630,7 @@ wb.save("model_wip.xlsx")
 cap = sheet("Capital")
 colwidths(cap, [34, 15, 15])
 r = 1
-r = title(cap, r, "CAPITAL — Sources & Uses")
+r = title(cap, r, "CAPITAL — Sources & Uses, SCENARIO B (ALTERNATIVE: new debt). Scenario A S&U is on Returns (Assumed).")
 r += 1
 
 r = section(cap, r, "USES", span=2)
@@ -674,7 +686,7 @@ HOLD = 5
 RCOLS = list(range(3, 3 + HOLD))  # C..G = Year1..Year5; column B reserved for Year 0
 colwidths(rt, [38, 13] + [13] * HOLD)
 r = 1
-r = title(rt, r, "RETURNS — Unlevered & Levered, 5-Year Hold")
+r = title(rt, r, "RETURNS — Unlevered (debt-agnostic) & Levered SCENARIO B (ALTERNATIVE: new debt), 5-Year Hold")
 r += 1
 
 # =====================================================================
@@ -746,7 +758,7 @@ r += 2
 
 r = section(rt, r, "Decomposition of the gap to Year-1 Forward NOI (each effect isolated via live counterfactual, not estimated)", span=2)
 rt.cell(row=r, column=1, value=(
-    "Counterfactual S2 = burn-off ON (55% turnover x 50% burn-off, on the 73 prior-renovated units, toward "
+    "Counterfactual S2 = burn-off ON (55% turnover x 50% burn-off, on the 74 prior-renovated units, toward "
     "Year-1's growth-adjusted market rent) but renovation-premium capture OFF (24 classic units stay at raw "
     "in-place). Isolates the burn-off effect cleanly because market-rent growth only enters Year-1 GPR THROUGH "
     "the burn-off and capture mechanisms -- with both off, growth alone has zero effect on Year-1 (verified).")).font = NOTE
@@ -849,12 +861,12 @@ rt.cell(row=r, column=2, value=f"=-{exit_price_addr}*{A['cost_of_sale_exit']}").
 cos_exit_addr = f"'Returns'!$B${cos_exit_row}"
 r += 1
 payoff_row = r
-rt.cell(row=r, column=1, value="Less: Loan Payoff (Debt tab, End Balance Year 5)")
+rt.cell(row=r, column=1, value="Less: Loan Payoff (Scenario B Debt tab, End Balance Year 5)")
 rt.cell(row=r, column=2, value=f"=-'Debt'!$F${DEBT['amort_end']}").number_format = USDC
 payoff_addr = f"'Returns'!$B${payoff_row}"
 r += 1
 net_proceeds_row = r
-rt.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY").font = BOLD
+rt.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY — SCENARIO B").font = BOLD
 rt.cell(row=r, column=2, value=f"={exit_price_addr}+{cos_exit_addr}+{payoff_addr}").font = BOLD
 rt.cell(row=r, column=2).number_format = USDC
 net_proceeds_addr = f"'Returns'!$B${net_proceeds_row}"
@@ -896,19 +908,19 @@ for col in RCOLS:
 r += 1
 
 debt_svc_row = r
-rt.cell(row=r, column=1, value="Less: Debt Service")
+rt.cell(row=r, column=1, value="Less: Debt Service (Scenario B)")
 for i, col in enumerate(RCOLS):
     dbrow = DEBT['amort_start'] + i
     rt.cell(row=r, column=col, value=f"=-'Debt'!$E${dbrow}").number_format = USDC
 r += 1
 lev_before_exit_row = r
-rt.cell(row=r, column=1, value="Levered CF from Operations")
+rt.cell(row=r, column=1, value="Levered CF from Operations (Scenario B)")
 for col in RCOLS:
     cl = get_column_letter(col)
     rt.cell(row=r, column=col, value=f"={cl}{ucf_row_rt}+{cl}{debt_svc_row}").number_format = USDC
 r += 1
 lev_exit_row = r
-rt.cell(row=r, column=1, value="+ Net Sale Proceeds (Year 5 only, levered)")
+rt.cell(row=r, column=1, value="+ Net Sale Proceeds (Year 5 only, levered, Scenario B)")
 for i, col in enumerate(RCOLS):
     if i == HOLD - 1:
         rt.cell(row=r, column=col, value=f"={net_proceeds_addr}").number_format = USDC
@@ -916,7 +928,7 @@ for i, col in enumerate(RCOLS):
         rt.cell(row=r, column=col, value=0).number_format = USDC
 r += 1
 lev_cf_total_row = r
-rt.cell(row=r, column=1, value="TOTAL LEVERED CASH FLOW TO EQUITY").font = BOLD
+rt.cell(row=r, column=1, value="TOTAL LEVERED CASH FLOW TO EQUITY — SCENARIO B").font = BOLD
 for col in RCOLS:
     cl = get_column_letter(col)
     rt.cell(row=r, column=col, value=f"={cl}{lev_before_exit_row}+{cl}{lev_exit_row}").font = BOLD
@@ -925,7 +937,7 @@ r += 2
 
 r = section(rt, r, "RETURNS SUMMARY", span=2)
 inv_row = r
-rt.cell(row=r, column=1, value="Total Equity Invested (Year 0)")
+rt.cell(row=r, column=1, value="Total Equity Invested (Year 0, Scenario B)")
 rt.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC
 r += 1
 uses_row = r
@@ -943,29 +955,29 @@ rt.cell(row=lev_cf_total_row, column=2).number_format = USDC
 unlev_range = f"B{unlev_cf_total_row}:{get_column_letter(RCOLS[-1])}{unlev_cf_total_row}"
 lev_range = f"B{lev_cf_total_row}:{get_column_letter(RCOLS[-1])}{lev_cf_total_row}"
 unlev_irr_row = r
-rt.cell(row=r, column=1, value="Unlevered IRR")
+rt.cell(row=r, column=1, value="Unlevered IRR (debt-agnostic)")
 rt.cell(row=r, column=2, value=f'=IFERROR(IRR({unlev_range}),"N/A - no sign change / undefined")').number_format = PCT1
 r += 1
 lev_irr_row = r
-rt.cell(row=r, column=1, value="Levered IRR")
+rt.cell(row=r, column=1, value="Levered IRR — SCENARIO B (alternative, new debt)")
 rt.cell(row=r, column=2, value=f'=IFERROR(IRR({lev_range}),"N/A - no sign change / undefined")').number_format = PCT1
 r += 1
 unlev_em_row = r
-rt.cell(row=r, column=1, value="Unlevered Equity Multiple")
+rt.cell(row=r, column=1, value="Unlevered Equity Multiple (debt-agnostic)")
 rt.cell(row=r, column=2,
         value=f"=SUM(C{unlev_cf_total_row}:{get_column_letter(RCOLS[-1])}{unlev_cf_total_row})/B{uses_row}").number_format = "0.00\"x\""
 r += 1
 lev_em_row = r
-rt.cell(row=r, column=1, value="Levered Equity Multiple")
+rt.cell(row=r, column=1, value="Levered Equity Multiple — SCENARIO B (alternative, new debt)")
 rt.cell(row=r, column=2,
         value=f"=SUM(C{lev_cf_total_row}:{get_column_letter(RCOLS[-1])}{lev_cf_total_row})/B{inv_row}").number_format = "0.00\"x\""
 r += 1
 peak_eq_row = r
-rt.cell(row=r, column=1, value="Peak Equity (single close, no follow-on calls)")
+rt.cell(row=r, column=1, value="Peak Equity, Scenario B (single close, no follow-on calls)")
 rt.cell(row=r, column=2, value=f"=B{inv_row}").number_format = USDC
 r += 2
 
-r = section(rt, r, "CASH-ON-CASH BY YEAR (levered)", span=1 + HOLD)
+r = section(rt, r, "CASH-ON-CASH BY YEAR (levered, Scenario B)", span=1 + HOLD)
 coc_row = r
 for i, col in enumerate(RCOLS, start=1):
     cl = get_column_letter(col)
@@ -996,7 +1008,7 @@ da = sheet("Debt (Assumed)")
 DACOLS = list(range(2, 2 + HOLD))  # B..F = Year1..Year5
 colwidths(da, [36] + [14] * HOLD)
 r = 1
-r = title(da, r, "DEBT (ASSUMED) — Scenario A: broker-disclosed existing loan + refinance at maturity")
+r = title(da, r, "DEBT (ASSUMED) — SCENARIO A (BASE CASE): broker-disclosed existing loan + refinance at maturity")
 da.cell(row=r, column=1, value=(
     "First mortgage and supplemental loan sourced from LoopNet/Crexi (see Assumptions). Amortization/IO "
     "status is NOT disclosed for either -- Assumptions!assum_io is a labeled judgment toggle. If the first "
@@ -1203,7 +1215,7 @@ wb.save("model_wip.xlsx")
 ra = sheet("Returns (Assumed)")
 colwidths(ra, [38, 13] + [13] * HOLD)
 r = 1
-r = title(ra, r, "RETURNS (ASSUMED DEBT) — Scenario A, 5-Year Hold")
+r = title(ra, r, "RETURNS (ASSUMED DEBT) — SCENARIO A (BASE CASE), 5-Year Hold")
 ra.cell(row=r, column=1, value=(
     "Same property, same NOI trajectory as the Scenario B (new-debt) Returns tab -- the only thing that "
     "changes here is the debt.")).font = NOTE
@@ -1259,7 +1271,7 @@ ra.cell(row=r, column=1, value="Less: Loan Payoff (Debt (Assumed), Year-5 Total 
 ra.cell(row=r, column=2, value=f"=-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}${DA['tot_end_row']}").number_format = USDC
 r += 1
 a_netproceeds_row = r
-ra.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY").font = BOLD
+ra.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY — SCENARIO A").font = BOLD
 ra.cell(row=r, column=2, value=f"=B{a_exitprice_row}+B{a_cos_row}+B{a_payoff_row}").font = BOLD
 ra.cell(row=r, column=2).number_format = USDC
 a_netproceeds_addr = f"'Returns (Assumed)'!$B${r}"
@@ -1306,7 +1318,7 @@ for i, col in enumerate(RCOLS):
         ra.cell(row=r, column=col, value=0).number_format = USDC
 r += 1
 a_levtotal_row = r
-ra.cell(row=r, column=1, value="TOTAL LEVERED CASH FLOW TO EQUITY").font = BOLD
+ra.cell(row=r, column=1, value="TOTAL LEVERED CASH FLOW TO EQUITY — SCENARIO A").font = BOLD
 ra.cell(row=r, column=2, value=f"=-{a_equity_addr}").font = BOLD
 ra.cell(row=r, column=2).number_format = USDC
 for col in RCOLS:
@@ -1317,17 +1329,17 @@ r += 2
 
 r = section(ra, r, "RETURNS SUMMARY — SCENARIO A (assumed debt)", span=2)
 a_irr_row = r
-ra.cell(row=r, column=1, value="Levered IRR")
+ra.cell(row=r, column=1, value="Levered IRR — SCENARIO A (BASE CASE)")
 a_lev_range = f"B{a_levtotal_row}:{get_column_letter(RCOLS[-1])}{a_levtotal_row}"
 ra.cell(row=r, column=2, value=f'=IFERROR(IRR({a_lev_range}),"N/A - no sign change / undefined")').number_format = PCT1
 r += 1
 a_em_row = r
-ra.cell(row=r, column=1, value="Levered Equity Multiple")
+ra.cell(row=r, column=1, value="Levered Equity Multiple — SCENARIO A (BASE CASE)")
 ra.cell(row=r, column=2,
         value=f"=SUM(C{a_levtotal_row}:{get_column_letter(RCOLS[-1])}{a_levtotal_row})/{a_equity_addr}").number_format = "0.00\"x\""
 r += 1
 a_coc1_row = r
-ra.cell(row=r, column=1, value="Year-1 Cash-on-Cash")
+ra.cell(row=r, column=1, value="Year-1 Cash-on-Cash — SCENARIO A (BASE CASE)")
 ra.cell(row=r, column=2, value=f"=C{a_levops_row}/{a_equity_addr}").number_format = PCT1
 r += 2
 
@@ -1535,7 +1547,7 @@ wb.save("model_wip.xlsx")
 #    from the Operating Model's base case and is adjusted only for what
 #    that table's two axes actually change (tax, debt sizing, renovation
 #    NOI/capex, or a flat rent-growth override) -- it does not re-run
-#    the full 97-unit/burn-off engine 25 times per table. Debt is
+#    the full unit-by-unit burn-off engine 25 times per table. Debt is
 #    re-sized where price or capex changes; held at the base-case loan
 #    where it doesn't. For full-fidelity what-if testing, edit
 #    Assumptions directly and read Returns/Waterfall.
@@ -1543,13 +1555,15 @@ wb.save("model_wip.xlsx")
 sn = sheet("Sensitivity")
 colwidths(sn, [22] + [13] * 5)
 r = 1
-r = title(sn, r, "SENSITIVITY")
+r = title(sn, r, "SENSITIVITY — built on SCENARIO B (ALTERNATIVE: new-debt) debt structure; see note")
 sn.cell(row=r, column=1, value=(
     "Each grid is a self-contained proxy calc: Year-1 NOI starts from the Operating Model's base case "
     "and is adjusted only for what that table's two axes change (tax, debt sizing, renovation NOI/capex, "
-    "or a flat rent-growth override); it does not re-run the full 97-unit/burn-off engine 25 times. "
+    "or a flat rent-growth override); it does not re-run the full unit-by-unit burn-off engine 25 times. "
     "Debt is re-sized where price or capex changes; held at the base-case loan where it doesn't. "
-    "IRR/EM values are pulled from the 'calculation detail' rows near the bottom of this tab.")).font = NOTE
+    "IRR/EM values are pulled from the 'calculation detail' rows near the bottom of this tab. "
+    "DEBT STRUCTURE IN THESE GRIDS IS SCENARIO B (new debt, 7.10% floating) -- NOT the Scenario A base case. "
+    "Read them as directional, not as base-case returns.")).font = NOTE
 r += 2
 
 def cumprinc_end_balance(loan_expr, n_years):
@@ -1762,7 +1776,7 @@ r = section(ck, r, "1. SOURCES = USES", span=3)
 check_row("Sources - Uses (Capital tab)", f"={CAP['cap_check_addr']}")
 r += 1
 
-r = section(ck, r, "2. LEVERED CF INDEPENDENTLY REBUILT FROM OPERATING + DEBT TABS (each year)", span=3)
+r = section(ck, r, "2. SCENARIO B: LEVERED CF REBUILT FROM OPERATING + DEBT TABS (each year)", span=3)
 for i, (opcol, dbrow, rcol) in enumerate(zip(YEAR_COLS[:5],
                                               range(DEBT['amort_start'], DEBT['amort_start'] + 5),
                                               RET['RCOLS']), start=1):
@@ -1778,13 +1792,13 @@ for i, col in enumerate(YEAR_COLS[:5], start=1):
     check_row(f"Year {i}: EGI+OpexTotal-NOI", f"={OPS}{cl}{egi_row}+{OPS}{cl}{opex_total_row}-{OPS}{cl}{noi_row}")
 r += 1
 
-r = section(ck, r, "4. WATERFALL DISTRIBUTIONS = AVAILABLE CASH (each year)", span=3)
+r = section(ck, r, "4. SCENARIO A (BASE CASE) WATERFALL DISTRIBUTIONS = AVAILABLE CASH (each year)", span=3)
 for i, col in enumerate(WF['WCOLS'], start=1):
     cl = get_column_letter(col)
     check_row(f"Year {i}: LP+GP-Available", f"='Waterfall'!{cl}{WF['wf_check_row']}")
 r += 1
 
-r = section(ck, r, "5. WATERFALL HURDLE BALANCES NEVER GO NEGATIVE", span=3)
+r = section(ck, r, "5. SCENARIO A (BASE CASE) WATERFALL HURDLE BALANCES NEVER GO NEGATIVE", span=3)
 t1_range = f"'Waterfall'!C{t1_bal_row}:{get_column_letter(WF['WCOLS'][-1])}{t1_bal_row}"
 t2_range = f"'Waterfall'!C{t2_bal_row}:{get_column_letter(WF['WCOLS'][-1])}{t2_bal_row}"
 ck.cell(row=r, column=1, value="MIN Tier-1 hurdle balance (should be >= 0)")
@@ -1801,7 +1815,7 @@ check_row("Scenario B (Capital tab): LP+GP Equity - Total Equity", f"={CAP['lp_e
 check_row("Scenario A (base case, Returns (Assumed) tab): LP+GP Equity - Total Equity", f"={RA['a_lp_eq_addr']}+{RA['a_gp_eq_addr']}-{RA['a_equity_addr']}")
 r += 1
 
-r = section(ck, r, "7. DEBT SCHEDULE INTERNAL CONSISTENCY", span=3)
+r = section(ck, r, "7. SCENARIO B DEBT SCHEDULE INTERNAL CONSISTENCY", span=3)
 check_row("Loan - Cumulative Principal Paid - Year5 End Balance",
           f"={DEBT['loan_addr']}-SUM('Debt'!D{DEBT['amort_start']}:D{DEBT['amort_end']})-'Debt'!F{DEBT['amort_end']}")
 r += 1
@@ -1811,7 +1825,7 @@ check_row("Bridge sum - Operating Model Year-1 NOI",
           f"='Returns'!B{RET['b_y1_row']}-{noi_y1}")
 r += 1
 
-r = section(ck, r, "9. DEBT (ASSUMED) SCHEDULE INTERNAL CONSISTENCY (post-refi sub-loan)", span=3)
+r = section(ck, r, "9. SCENARIO A DEBT (ASSUMED) SCHEDULE INTERNAL CONSISTENCY (post-refi sub-loan)", span=3)
 check_row("Refi Loan - Cumulative Post-Refi Principal - Year5 Refi End Balance",
           f"={DA['refi_loan_addr']}-SUM('Debt (Assumed)'!C{rf_prin_row}:{get_column_letter(DA['DACOLS'][-1])}{rf_prin_row})-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}{rf_end_row}")
 r += 1
@@ -1832,7 +1846,7 @@ colwidths(sm, [40, 20, 40])
 r = 1
 r = title(sm, r, "SUMMARY — Parkview Crossing")
 sm.cell(row=r, column=1, value=(
-    "97-unit garden apartment community, Pompano Beach, FL, built 1958. Light value-add / core-plus: "
+    "98-unit garden apartment community (listing says 97 in one place, 98 in another -- see Assumptions), Pompano Beach, FL, built 1958. Light value-add / core-plus: "
     "75% of units already renovated by the prior owner; this plan finishes the remaining ~24 classic "
     "units, burns off loss-to-lease on the rest, and underwrites Florida's post-sale property-tax "
     "reassessment (and a tax-adjusted exit) explicitly rather than ignoring them.")).font = NOTE
@@ -1850,7 +1864,7 @@ sm.cell(row=r, column=2).number_format = USDC; r += 1
 sm.cell(row=r, column=1, value="  LP Equity (90%)"); sm.cell(row=r, column=2, value=f"={RA['a_lp_eq_addr']}").number_format = USDC; r += 1
 sm.cell(row=r, column=1, value="  GP Equity (10%)"); sm.cell(row=r, column=2, value=f"={RA['a_gp_eq_addr']}").number_format = USDC; r += 2
 
-r = section(sm, r, "KEY METRICS", span=2)
+r = section(sm, r, "KEY METRICS (property-level, same under both debt scenarios unless labeled)", span=2)
 sm.cell(row=r, column=1, value="1. Broker-Stated Cap Rate (seller's current tax basis)"); sm.cell(row=r, column=2, value=f"={A['broker_cap']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, reassessed tax (TRUE going-in -- anchors the exit cap below)").font = BOLD
 sm.cell(row=r, column=2, value=f"={RET['cap_inplace_addr']}").font = BOLD
@@ -1859,21 +1873,21 @@ sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr 
 sm.cell(row=r, column=2, value=f"='Returns'!B{RET['cap_y1fwd_row']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Exit Cap Rate (base case, In-Place entry + 50bps -- see NOI Bridge on Returns tab)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Assumed-Debt LTV at Close (fixed balance, not sized)"); sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}/{A['price']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Hold Period"); sm.cell(row=r, column=2, value=f"={A['hold_years']}").number_format = "0 \"years\""; r += 2
+sm.cell(row=r, column=1, value="Hold Period (structural)"); sm.cell(row=r, column=2, value=f"={A['hold_years']}").number_format = "0 \"years\""; r += 2
 
 r = section(sm, r, "RETURNS — BASE CASE: Scenario A, assumed debt", span=2)
 sm.cell(row=r, column=1, value="Unlevered IRR (debt-agnostic)"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['unlev_irr_row']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Levered IRR (deal-level)").font = BOLD
+sm.cell(row=r, column=1, value="Levered IRR (deal-level, Scenario A)").font = BOLD
 sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_irr_row']}").font = BOLD
 sm.cell(row=r, column=2).number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Unlevered Equity Multiple (debt-agnostic)"); sm.cell(row=r, column=2, value=f"='Returns'!B{RET['unlev_em_row']}").number_format = "0.00\"x\""; r += 1
-sm.cell(row=r, column=1, value="Levered Equity Multiple (deal-level)").font = BOLD
+sm.cell(row=r, column=1, value="Levered Equity Multiple (deal-level, Scenario A)").font = BOLD
 sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_em_row']}").font = BOLD
 sm.cell(row=r, column=2).number_format = "0.00\"x\""; r += 1
-sm.cell(row=r, column=1, value="LP IRR"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_irr_row']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="LP Equity Multiple"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_mult_row']}").number_format = "0.00\"x\""; r += 1
-sm.cell(row=r, column=1, value="GP IRR"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_irr_row']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="GP Equity Multiple"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_mult_row']}").number_format = "0.00\"x\""; r += 2
+sm.cell(row=r, column=1, value="LP IRR (Scenario A)"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_irr_row']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="LP Equity Multiple (Scenario A)"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['lp_mult_row']}").number_format = "0.00\"x\""; r += 1
+sm.cell(row=r, column=1, value="GP IRR (Scenario A)"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_irr_row']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="GP Equity Multiple (Scenario A)"); sm.cell(row=r, column=2, value=f"='Waterfall'!B{WF['gp_mult_row']}").number_format = "0.00\"x\""; r += 2
 
 r = section(sm, r, "DEBT SCENARIO COMPARISON — deal-level (pre-promote) returns", span=3)
 sm.cell(row=r, column=2, value="A: Assumed Debt (BASE CASE)").font = BOLD
@@ -1914,26 +1928,14 @@ hdr = r
 for i, h in enumerate(["Target", "Max Price", "vs. $13.8M Asking", "Implied In-Place Cap", "Deal IRR / LP IRR"], start=1):
     sm.cell(row=hdr, column=i, value=h).font = BOLD
 r += 1
-bid_rows = [
-    ("LP clears 8% pref (LP IRR = 8%)", 15_471_922, "+12.1%", 0.056687, "5.34% / 8.00%"),
-    ("Levered IRR (deal) = 12%", 12_294_971, "-10.9%", 0.075691, "12.00% / 12.63%"),
-    ("Levered IRR (deal) = 15%", 11_552_192, "-16.3%", 0.081642, "15.00% / 14.31%"),
-]
-for label, price_val, vs_ask, cap_val, irr_str in bid_rows:
-    sm.cell(row=r, column=1, value=label)
-    sm.cell(row=r, column=2, value=price_val).number_format = USDC
-    sm.cell(row=r, column=3, value=vs_ask)
-    sm.cell(row=r, column=4, value=cap_val).number_format = PCT1
-    sm.cell(row=r, column=5, value=irr_str)
-    r += 1
-sm.cell(row=r, column=1, value=(
-    "None of the three targets hit the structural floor (~$8.78M, below which the assumed $9.45M loan "
-    "would exceed Total Uses -- see price_solve.py output). All three are cleanly reachable.")).font = NOTE
+sm.cell(row=r, column=1, value="PENDING RE-SOLVE (Step 4): the prior solved prices assumed 97 units; the model now uses 98 "
+        "(see Assumptions 'Units' note). Blanked rather than left stale. Step 4 re-solves under BOTH debt scenarios.").font = BOLD
+r += 1
 r += 2
 
 r = section(sm, r, "DEAL THESIS", span=2)
 sm.cell(row=r, column=1, value=(
-    "Light value-add / core-plus acquisition of a 1958-vintage, 97-unit Broward County garden apartment "
+    "Light value-add / core-plus acquisition of a 1958-vintage, 98-unit Broward County garden apartment "
     "community that is 75% already renovated. Return drivers: (1) finishing the ~24 remaining classic "
     "units on a bottom-up $20,460/unit scope, (2) loss-to-lease burn-off on units still priced below the "
     "broker-disclosed 20.76% market gap, (3) modest, Broward-Class-C-sourced market rent growth capped "
