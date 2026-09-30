@@ -131,6 +131,7 @@ def load_inputs(path):
     I["ust5"] = inp("5-Year Treasury Yield")
     I["prepay5"] = [inp(f"5-Year Fixed Prepayment Premium, Loan Year {i}", exact=True) for i in range(1, 6)]
     I["sofr30"] = inp("30-Day Average SOFR")
+    I["b_term"] = inp("Scenario B Loan Term")
     I["float_spread"] = inp("Floating Spread over 30-Day Average SOFR")
     I["cap_strike"] = inp("Rate Cap Strike")
     I["cap_cost_pct"] = inp("2-Year Rate Cap Premium")
@@ -252,8 +253,9 @@ def waterfall(lev_cf, equity, I):
 # prior base case (5.20%) as the starting row of the change bridge (bridge.py). Values are the
 # ones in commit efb3da1's Assumptions tab.
 LEGACY_INPUTS = dict(other_income_mo=35.0, contract_svc=450.0, rate=0.0385 + 0.0325, ltv=0.65, min_dy=0.08,
-                     io_years=2, exit_spread=0.005)
-LEGACY_FLAGS = ("classic_bug", "tax10", "util_old", "exit_old", "debt_old", "no_prepay", "no_paydown", "plan10")
+                     io_years=2, exit_spread=0.005, sofr30=0.0374)
+LEGACY_FLAGS = ("classic_bug", "tax10", "util_old", "exit_old", "debt_old", "no_prepay", "no_paydown", "plan10",
+                "b10", "sofr_old")
 
 
 def run_model(I, price=None, exit_cap=None, legacy=()):
@@ -405,17 +407,27 @@ def run_model(I, price=None, exit_cap=None, legacy=()):
             return 0.0
         return I["prepay"][int(loan_year) - 1]
 
-    # ---- Scenario B: new agency debt
+    # ---- Scenario B: new agency debt at closing. Current: 5-year fixed (5-yr UST + spread) whose term
+    # matches the 5-year hold, so it is repaid at maturity with no prepayment premium. Legacy "b10": the
+    # prior 10-year fixed loan with the 10-year declining premium (loan year 5 = 3%).
     B = {}
     noi1 = m["noi"][0]
-    B["loan"], legs, B["binding"] = size(noi1, P)
+    b10 = "b10" in L
+    b_rate = rate if b10 else I["ust5"] + I["agency_spread"]
+    B["rate"], B["const"] = b_rate, _pmt(b_rate, am, 1.0)
+    if b10:
+        B["loan"], legs, B["binding"] = size(noi1, P)
+    else:
+        legs = {"LTV": P * ltv, "DSCR": noi1 / (I["min_dscr"] * B["const"])}
+        B["loan"] = min(legs.values())
+        B["binding"] = next(k for k, v in legs.items() if v == B["loan"])
     B["loan_ltv"], B["loan_dscr"] = legs["LTV"], legs["DSCR"]
     B["loan_dy"] = legs.get("Debt Yield")
-    B["pmt"] = _pmt(rate, am, B["loan"])
+    B["pmt"] = _pmt(b_rate, am, B["loan"])
     B["beg"], B["int"], B["prin"], B["ds"], B["end"] = [], [], [], [], []
     bal = B["loan"]
     for y in range(1, HOLD + 1):
-        i_ = bal * rate
+        i_ = bal * b_rate
         p_ = 0.0 if y <= io else B["pmt"] - i_
         B["beg"].append(bal); B["int"].append(i_); B["prin"].append(p_); B["ds"].append(i_ + p_)
         bal -= p_
@@ -424,7 +436,10 @@ def run_model(I, price=None, exit_cap=None, legacy=()):
     B["equity"] = m["uses_b"] - B["loan"]
     B["lp_eq"], B["gp_eq"] = B["equity"] * (1 - I["gp_coinvest"]), B["equity"] * I["gp_coinvest"]
     B["payoff"] = -B["end"][-1]
-    B["prepay_pct"] = prepay_pct(HOLD)  # sold at the end of loan year 5
+    if b10:
+        B["prepay_pct"] = prepay_pct(HOLD)  # 10-yr loan sold at the end of loan year 5
+    else:  # 5-yr loan: repaid at maturity when the sale coincides with it; otherwise the 5-4-3-2-1 schedule
+        B["prepay_pct"] = 0.0 if HOLD >= I["b_term"] else I["prepay5"][HOLD - 1]
     B["prepay"] = -B["end"][-1] * B["prepay_pct"]
     B["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + B["payoff"] + B["prepay"]
     B["lev_ops"] = [m["ucf"][y] - B["ds"][y] for y in range(HOLD)]
@@ -529,7 +544,8 @@ def run_model(I, price=None, exit_cap=None, legacy=()):
     old_debt = "debt_old" in L
     plans = {"sale": sale}
     # Short refi (a): floating, 30-day Average SOFR + spread, priced rate cap, sized on the capped rate
-    plans["float"] = refi_plan(I["sofr30"] + I["float_spread"], I["cap_strike"] + I["float_spread"],
+    sofr30 = LEGACY_INPUTS["sofr30"] if "sofr_old" in L else I["sofr30"]
+    plans["float"] = refi_plan(sofr30 + I["float_spread"], I["cap_strike"] + I["float_spread"],
                                HOLD if I["float_io"] == 1 else 0, I["cap_cost_pct"], I["float_prepay"])
     # Short refi (b): 5-year agency fixed, 5-yr UST + agency spread, 5-4-3-2-1 declining premium
     plans["fixed5"] = refi_plan(I["ust5"] + I["agency_spread"], I["ust5"] + I["agency_spread"], io, 0.0,
@@ -672,7 +688,9 @@ def compare(path, I, m):
     C.scalar("Capital", "Sponsor Equity (plug)", B["equity"])
     C.scalar("Capital", "LP Equity", B["lp_eq"], exact=True)
     C.scalar("Capital", "GP Equity (co-invest)", B["gp_eq"])
-    C.scalar("Debt", "Annual Mortgage Constant", m["const"], col=3, tol=1e-7)
+    C.scalar("Debt", "Annual Mortgage Constant", B["const"], col=3, tol=1e-7)
+    C.scalar("Assumptions", "Scenario B All-In Rate", B["rate"], col=3, tol=TOL_RATE)
+    C.scalar("Assumptions", "Scenario B Prepayment Premium at Sale", B["prepay_pct"], col=3, tol=TOL_RATE)
     C.scalar("Debt", "Loan Amount — LTV Constraint", B["loan_ltv"], col=3)
     C.scalar("Debt", "Loan Amount — DSCR Constraint", B["loan_dscr"], col=3)
     C.scalar("Debt", "Resulting DSCR (Year 1)", B["dscr1"], col=3, tol=TOL_RATE)

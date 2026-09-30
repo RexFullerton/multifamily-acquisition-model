@@ -213,16 +213,16 @@ A['recert_inspect'] = inp(ws, r, "Recertification Inspection Cost ($, one-time)"
 A['recert_remediation'] = inp(ws, r, "Recertification Remediation Contingency ($, one-time)", 150000, USDC, "placeholder — genuinely unknowable without an engineer's report"); r += 1
 r += 1
 
-r = section(ws, r, "DEBT — AGENCY FIXED-RATE TERMS (Scenario B new debt AND the Scenario A refinance)")
+r = section(ws, r, "DEBT — AGENCY TERMS (sizing rules for every agency loan; 10-year rate = Scenario A plan-3 comparison)")
 ws.cell(row=r, column=1, value=(
     "Fannie Mae Small Mortgage Loan program (loans up to $9M; max LTV 80%; min DSCR 1.25x; 5-30 yr terms; up to "
     "30-yr amortization; declining prepayment premium available) -- multifamily.fanniemae.com term sheet. Both the "
     "new loan (~$8M) and the Year-4 refinance fall under the $9M cap. Replaces the prior 7.10% floating bridge-style "
     "assumption, which had no rate-cap cost.")).font = NOTE
 r += 1
-A['ust10'] = inp(ws, r, "10-Year Treasury Yield", 0.0524, PCT, "FRED series DGS10, 9/28/2026 (latest print). Held flat; no forward curve."); r += 1
+A['ust10'] = inp(ws, r, "10-Year Treasury Yield", 0.0524, PCT, "FRED series DGS10, observation 9/28/2026 (latest FRED print as of 9/30/2026). Held flat; no forward curve."); r += 1
 A['agency_spread'] = inp(ws, r, "Agency Spread over 10-Year Treasury", 0.0200, PCT, "JUDGMENT within broker-sourced ranges: multifamily.loans cites agency spreads 'generally 200-250 bps'; its Aug-2026 Fannie/Freddie small-loan quotes (6.10-8.20% vs a 4.70% 10-yr) imply 140-350 bps; apartmentloanstore.com Fannie quotes on 9/29/2026 (6.28-6.87%) imply ~105-165 bps over today's 10-yr for larger/better assets. 200 bps reflects small balance, 1958 Class C, and a declining-prepay (not yield-maintenance) structure. Indicative, not a term sheet."); r += 1
-A['rate'] = frm(ws, r, "All-In Fixed Rate (10-yr fixed)", f"={A['ust10']}+{A['agency_spread']}", PCT, bold=True); r += 1
+A['rate'] = frm(ws, r, "All-In Fixed Rate (10-yr fixed)", f"={A['ust10']}+{A['agency_spread']}", PCT, "Used only by the Scenario A plan-3 comparison (10-year refinance). Scenario B now uses a 5-year fixed loan; see below.", bold=True); r += 1
 A['ltv'] = inp(ws, r, "Maximum LTV %", 0.75, PCT1, "Program max 80%; 75% used for a 1958 Class C asset (judgment). Refinance LTV applies to value at refinance (NOI / exit cap)."); r += 1
 A['min_dscr'] = inp(ws, r, "Minimum DSCR (on amortizing debt service)", 1.25, "0.00x", "Fannie Small Loan minimum. Sized on the fully amortizing payment, as agencies do."); r += 1
 A['io_years'] = inp(ws, r, "Interest-Only Period (years)", 0, "0", "JUDGMENT: DSCR-constrained agency loans generally do not get interest-only; partial IO usually requires lower leverage."); r += 1
@@ -258,7 +258,7 @@ ws.cell(row=r, column=1, value=(
 r += 1
 A['a_plan'] = inp(ws, r, "Scenario A Exit Plan (1 = sell at maturity; 2 = short refi, cheaper of floating/5-yr fixed; 3 = 10-yr fixed refi, comparison)", 2, "0",
                   "BASE CASE = 2 (short refinance; the floating loan with a cap is the cheaper of the two). See README section 6 for why a sponsor would choose it."); r += 1
-A['sofr30'] = inp(ws, r, "30-Day Average SOFR", 0.0374, PCT, "FRED series SOFR30DAYAVG, 9/29/2026: 3.739%. Held flat to the Dec-2029 refinance (no forward curve)."); r += 1
+A['sofr30'] = inp(ws, r, "30-Day Average SOFR", 0.0373072, "0.0000%", "FRED series SOFR30DAYAVG, observation 9/28/2026: 3.73072%. Dated 9/28 to match the Treasury inputs (DGS5, DGS10), whose latest FRED print is 9/28/2026. Held flat to the Dec-2029 refinance (no forward curve)."); r += 1
 A['float_spread'] = inp(ws, r, "Floating Spread over 30-Day Average SOFR", 0.0300, PCT, "multifamily-usa.com rates page (reviewed 9/6/2026): bridge, 12-month floating + extensions, lease-up / light value-add, 'SOFR + ~275-325 bps before cap'. Midpoint used (JUDGMENT). Agency floating is not available at this size: Freddie Optigo floating minimum $10M (term sheet 4/26); Fannie SARM minimum $25M."); r += 1
 A['float_rate'] = frm(ws, r, "Floating Refi All-In Rate (SOFR + spread)", f"={A['sofr30']}+{A['float_spread']}", PCT, bold=True); r += 1
 A['cap_strike'] = inp(ws, r, "Rate Cap Strike (SOFR)", 0.045, PCT, "JUDGMENT: ~75 bps above today's 30-day average SOFR. The loan is sized on the capped rate (strike + spread), so DSCR holds at the worst case."); r += 1
@@ -266,7 +266,7 @@ A['cap_cost_pct'] = inp(ws, r, "2-Year Rate Cap Premium (% of loan, paid at refi
 A['float_sizing_rate'] = frm(ws, r, "Floating Refi Sizing Rate (cap strike + spread)", f"={A['cap_strike']}+{A['float_spread']}", PCT); r += 1
 A['float_io'] = inp(ws, r, "Floating Refi Interest-Only (1 = yes)", 1, "0", "JUDGMENT: bridge-style floating loans are normally interest-only."); r += 1
 A['float_prepay'] = inp(ws, r, "Floating Refi Prepayment Premium at Sale (%)", 0.0, PCT1, "JUDGMENT: bridge loans are typically open after a 12-month minimum-interest period; the sale is in loan year 2."); r += 1
-A['ust5'] = inp(ws, r, "5-Year Treasury Yield", 0.0506, PCT, "FRED series DGS5, 9/28/2026. Held flat."); r += 1
+A['ust5'] = inp(ws, r, "5-Year Treasury Yield", 0.0506, PCT, "FRED series DGS5, observation 9/28/2026 (latest FRED print as of 9/30/2026). Held flat."); r += 1
 A['rate5'] = frm(ws, r, "5-Year Agency Fixed Rate (5-yr UST + agency spread)", f"={A['ust5']}+{A['agency_spread']}", PCT, "Uses the same 200 bps agency spread judgment as the 10-year loan. The multifamily-usa.com page shows 5-year agency spreads ~30 bps wider than 10-year for stabilized assets; not added.", bold=True); r += 1
 A['prepay5'] = []
 for i, v in enumerate([0.05, 0.04, 0.03, 0.02, 0.01], start=1):
@@ -275,8 +275,16 @@ for i, v in enumerate([0.05, 0.04, 0.03, 0.02, 0.01], start=1):
 A['prepay5_range'] = f"{A['prepay5'][0]}:{A['prepay5'][-1].split('!')[1]}"
 r += 1
 
+r = section(ws, r, "DEBT — SCENARIO B: NEW 5-YEAR AGENCY FIXED LOAN AT CLOSING (term matched to the 5-year hold)")
+A['b_term'] = inp(ws, r, "Scenario B Loan Term (years)", 5, "0", "Matched to the 5-year hold so the loan is repaid at maturity when the property sells: no prepayment premium. Fannie Small Loan terms allow 5-30 years."); r += 1
+A['b_rate'] = frm(ws, r, "Scenario B All-In Rate (5-yr UST + agency spread)", f"={A['rate5']}", PCT, "Same 5-year agency fixed rate as the Scenario A plan-2b refinance.", bold=True); r += 1
+A['b_prepay_row'] = r  # formula filled once the hold-period cell exists (HOLD & EXIT section below)
+A['b_prepay'] = frm(ws, r, "Scenario B Prepayment Premium at Sale", 0, PCT1, "0 when the sale coincides with maturity; otherwise the 5-4-3-2-1 schedule. The prior 10-year loan paid 3% ($240,408) here."); r += 1
+r += 1
+
 r = section(ws, r, "HOLD & EXIT")
 A['hold_years'] = frm(ws, r, "Hold Period (years) -- STRUCTURAL, not a live input", 5, "0", "The model is built for a 5-year hold (5 cash-flow columns, exit on Year-6 forward NOI). Changing this cell does NOT change the model -- shown black, not blue, for that reason."); r += 1
+ws.cell(row=A['b_prepay_row'], column=3, value=f"=IF({A['hold_years']}>={A['b_term']},0,INDEX({A['prepay5_range']},{A['hold_years']}))")
 A['exit_anchor'] = inp(ws, r, "Exit Cap — Market Anchor (Fort Lauderdale multifamily average)", 0.056, PCT, "Matthews, Fort Lauderdale Multifamily Market Report Q3 2025 (pub. 11/20/2025): average cap rate 5.6%, $283K/unit. Cross-check: Colliers South Florida Multifamily Q1 2026 (4/24/2026): cap rates 'near 5.0%' (all classes, tri-county). Used the higher, Broward-specific figure. NOT this deal's own cap rate."); r += 1
 A['exit_vintage'] = inp(ws, r, "Exit Cap — Spread for Class C / 1958 Vintage at Exit", 0.010, PCT, "JUDGMENT. Market averages are dominated by newer stock; at exit this will be a ~73-year-old Class C building. CBRE's H1 2026 Cap Rate Survey (8/12/2026) reports expectations for cap-rate expansion are strongest for Class C, but its market-level tables are gated, so no sourced Class C spread is available. Named comps checked: Cascades at the Hammocks (Miami-Dade, 264 units, 1988, $65.5M / $248,106/unit, May 2026, Freddie loans assumed) and Savona Grand (Palm Beach County, 214 units, bought by American Landmark July 2026) -- neither has a publicly reported price-and-NOI pair, so no implied cap is available."); r += 1
 A['exit_cap'] = frm(ws, r, "EXIT CAP RATE (base case) = market anchor + vintage spread", f"={A['exit_anchor']}+{A['exit_vintage']}", PCT, "Direct input, not tied to entry. Sensitivity tables run it +/-100 bps. Also used as the lender's cap rate for the refinance appraisal.", bold=True); r += 1
@@ -638,7 +646,7 @@ noi_y1 = f"{OPS}${get_column_letter(YEAR_COLS[0])}${OP['noi_row']}"
 db = sheet("Debt")
 colwidths(db, [34, 13, 13, 13, 13, 13])
 r = 1
-r = title(db, r, "DEBT — SCENARIO B (ALTERNATIVE): new agency fixed-rate loan, sized on the binding constraint (no circularity)")
+r = title(db, r, "DEBT — SCENARIO B (ALTERNATIVE): new 5-year agency fixed loan matched to the hold, sized on the binding constraint")
 r += 1
 
 r = section(db, r, "SIZING", span=3)
@@ -648,7 +656,7 @@ noi_y1_ref = f"'Debt'!$C${r}"
 r += 1
 const_row = r
 db.cell(row=r, column=1, value="Annual Mortgage Constant (fixed rate, full amortization)")
-db.cell(row=r, column=3, value=f"=-PMT({A['rate']},{A['amort_years']},1)").number_format = "0.0000%"
+db.cell(row=r, column=3, value=f"=-PMT({A['b_rate']},{A['amort_years']},1)").number_format = "0.0000%"
 const_addr = f"'Debt'!$C${const_row}"
 r += 1
 loan_ltv_row = r
@@ -684,7 +692,7 @@ hdr = r
 for i, h in enumerate(["Year", "Beg. Balance", "Interest", "Principal", "Debt Service", "End Balance"], start=1):
     db.cell(row=hdr, column=i, value=h).font = BOLD
 r += 1
-pmt_formula = f"=-PMT({A['rate']},{A['amort_years']},{loan_addr})"
+pmt_formula = f"=-PMT({A['b_rate']},{A['amort_years']},{loan_addr})"
 db.cell(row=r, column=1, value="Annual P&I Payment (post-IO)")
 db.cell(row=r, column=2, value=pmt_formula).number_format = USDC
 pi_addr = f"'Debt'!$B${r}"
@@ -696,7 +704,7 @@ for y in range(1, 6):
         db.cell(row=r, column=2, value=f"={loan_addr}").number_format = USDC
     else:
         db.cell(row=r, column=2, value=f"=F{r-1}").number_format = USDC
-    db.cell(row=r, column=3, value=f"=B{r}*{A['rate']}").number_format = USDC
+    db.cell(row=r, column=3, value=f"=B{r}*{A['b_rate']}").number_format = USDC
     # IO period read from Assumptions (was a hardcoded 2 -- a typed number in a formula tab)
     db.cell(row=r, column=4, value=f"=IF(A{r}<={A['io_years']},0,{pi_addr}-C{r})").number_format = USDC
     db.cell(row=r, column=5, value=f"=C{r}+D{r}").number_format = USDC
@@ -706,8 +714,8 @@ amort_end = r - 1
 db.cell(row=dscr1_row, column=3, value=f"={noi_y1_ref}/E{amort_start}").number_format = "0.00\"x\""
 r += 1
 prepay_b_row = r
-db.cell(row=r, column=1, value="Prepayment Premium % at Sale (loan year = hold period)")
-db.cell(row=r, column=3, value=f"=INDEX({A['prepay_range']},{A['hold_years']})").number_format = PCT1
+db.cell(row=r, column=1, value="Prepayment Premium % at Sale (0: 5-year loan matures at the sale)")
+db.cell(row=r, column=3, value=f"={A['b_prepay']}").number_format = PCT1
 prepay_b_addr = f"'Debt'!$C${r}"
 r += 1
 DEBT = dict(loan_addr=loan_addr, amort_start=amort_start, amort_end=amort_end,
@@ -955,7 +963,7 @@ rt.cell(row=r, column=2, value=f"=-'Debt'!$F${DEBT['amort_end']}").number_format
 payoff_addr = f"'Returns'!$B${payoff_row}"
 r += 1
 prepay_b_row = r
-rt.cell(row=r, column=1, value="Less: Prepayment Premium (Scenario B, declining schedule, loan year 5)")
+rt.cell(row=r, column=1, value="Less: Prepayment Premium (Scenario B; 0 when the 5-year loan matures at the sale)")
 rt.cell(row=r, column=2, value=f"={payoff_addr}*{DEBT['prepay_b_addr']}").number_format = USDC
 r += 1
 net_proceeds_row = r
@@ -1796,7 +1804,7 @@ YC = [get_column_letter(c) for c in YEAR_COLS[:6]]          # Operating Model co
 YR = [f"{OPS}{c}${OP['yr_row']}" for c in YC]              # year-number cells (no typed year indices)
 LOSS = f"({A['vacancy']}+{A['credit_loss']}+{A['concessions']})"
 HOLD_C, MAT_C, IO_C = A['hold_years'], A['assum_first_maturity_yr'], A['io_years']
-RATE, AM, CONST = A['rate'], A['amort_years'], DEBT['const_addr']
+RATE, AM, CONST = A['b_rate'], A['amort_years'], DEBT['const_addr']  # RATE/CONST: Scenario B loan
 SENS_BASE = {}
 
 
@@ -1879,7 +1887,7 @@ def sens_block(row, label, scen, pk, ec, dg, prem, ck, growth_rows=False):
         sn.cell(row=q1, column=4, value=f"={uses}-C{q1}").number_format = USD  # equity
         n_am = f"MAX(0,{HOLD_C}-{IO_C})"
         sn.cell(row=q1, column=5, value=f"=IF({n_am}=0,C{q1},-FV({RATE},{n_am},PMT({RATE},{AM},C{q1}),C{q1}))").number_format = USD
-        sn.cell(row=q1, column=6, value=f"=E{q1}*INDEX({A['prepay_range']},{HOLD_C})").number_format = USD
+        sn.cell(row=q1, column=6, value=f"=E{q1}*{A['b_prepay']}").number_format = USD
         sn.cell(row=q1, column=7, value=f"={exit_net}-E{q1}-F{q1}").number_format = USD
         eq, proceeds = f"D{q1}", f"G{q1}"
         sn.cell(row=q2, column=1, value=f"{label} | debt service Y1..Y5").font = NOTE
@@ -1923,7 +1931,7 @@ TABLES = [
          cols=[(f"={A['reno_per_unit']}*(1+({k})*{A['sens_cost_step']})", USDC) for k in KS],
          args=lambda rh, ch: dict(pk="1", ec=A['exit_cap'], dg="0", prem=rh, ck=f"({ch}/{A['reno_per_unit']})"),
          base=(0, 2), note="Base premium is $0 (renovated units reach market). Rows show what a premium above market would add."),
-    dict(key="T4", scen="B", title="TABLE 4 (SECONDARY: Scenario B, new agency debt) — Exit Cap (rows) x Purchase Price (cols)",
+    dict(key="T4", scen="B", title="TABLE 4 (SECONDARY: Scenario B, new 5-yr agency fixed) — Exit Cap (rows) x Purchase Price (cols)",
          rows=[(f"={A['exit_cap']}+({k})*{A['sens_exit_step']}", PCT) for k in KS],
          cols=[(f"={A['price']}*(1+({k})*{A['sens_price_step']})", USDC) for k in KS],
          args=lambda rh, ch: dict(pk=f"({ch}/{A['price']})", ec=rh, dg="0", prem=A['reno_premium_mo'], ck="1"),
@@ -2122,7 +2130,7 @@ sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr 
 sm.cell(row=r, column=2, value=f"='Returns'!B{RET['cap_y1fwd_row']}").number_format = PCT1; r += 1
 sm.cell(row=r, column=1, value="Exit Cap Rate (base case: Fort Lauderdale market 5.60% + 100 bps Class C / vintage spread)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT; r += 1
 sm.cell(row=r, column=1, value="Assumed-Debt LTV at Close (after any lender-required paydown)"); sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}/{A['price']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Agency 10-yr Fixed Rate (Scenario B new debt; Scenario A plan 3 comparison)"); sm.cell(row=r, column=2, value=f"={A['rate']}").number_format = PCT; r += 1
+sm.cell(row=r, column=1, value="Scenario B Rate (new 5-yr agency fixed, matched to the hold)"); sm.cell(row=r, column=2, value=f"={A['b_rate']}").number_format = PCT; r += 1
 sm.cell(row=r, column=1, value="Scenario A Refinance Rate, selected plan (floating: 30-day SOFR + spread, capped)"); sm.cell(row=r, column=2, value=f"={DA['SEL']['rate']}").number_format = PCT; r += 1
 sm.cell(row=r, column=1, value="Hold Period (structural)"); sm.cell(row=r, column=2, value=f"={A['hold_years']}").number_format = "0 \"years\""; r += 2
 
@@ -2163,15 +2171,15 @@ r += 2
 
 r = section(sm, r, "DEBT SCENARIO COMPARISON — deal-level (pre-promote) returns", span=3)
 sm.cell(row=r, column=2, value="A: Assumed Debt (BASE CASE)").font = BOLD
-sm.cell(row=r, column=3, value="B: New Debt (alternative)").font = BOLD
+sm.cell(row=r, column=3, value="B: New 5-yr Agency Debt (alternative)").font = BOLD
 r += 1
 sm.cell(row=r, column=1, value="Year-0 Loan Amount")
 sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}").number_format = USDC
 sm.cell(row=r, column=3, value=f"={DEBT['loan_addr']}").number_format = USDC
 r += 1
-sm.cell(row=r, column=1, value="Rate (A: blended assumed rate to Year 3, then the selected refi; B: agency fixed)")
+sm.cell(row=r, column=1, value="Rate (A: blended assumed rate to Year 3, then the selected refi; B: 5-yr agency fixed)")
 sm.cell(row=r, column=2, value=f"={A['assum_blended_rate']}").number_format = PCT
-sm.cell(row=r, column=3, value=f"={A['rate']}").number_format = PCT
+sm.cell(row=r, column=3, value=f"={A['b_rate']}").number_format = PCT
 r += 1
 sm.cell(row=r, column=1, value="Sponsor Equity Required")
 sm.cell(row=r, column=2, value=f"={RA['a_equity_addr']}").number_format = USDC

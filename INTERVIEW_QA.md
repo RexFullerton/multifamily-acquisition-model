@@ -83,16 +83,16 @@ A longer hold only works if the refinance can be repaid cheaply at the sale, whi
 
 The levered IRR is 5.73% and the unlevered 5.53%, so leverage adds about 20 bps.
 - **Years 1-3.** The assumed debt costs about 4.2% blended against a 6.36% Year-1 yield, which is positive leverage.
-- **After the refinance.** The loan costs 6.74% against about a 6.6% property yield, roughly neutral.
+- **After the refinance.** The loan costs 6.73% against about a 6.6% property yield, roughly neutral.
 - **The costs.** The cap premium and the Year-3 equity contribution take back most of the early gain.
 
-With new debt at closing (Scenario B, 7.24%), levered IRR is only 2.45%.
+With new debt at closing (Scenario B, a 5-year fixed loan at 7.06%), levered IRR is only 3.36%.
 
 ---
 
 **7. What is the assumable loan worth?**
 
-At the same price, assuming the debt returns 5.73% against 2.45% with new agency debt: about 328 bps. It also needs about $890,000 less equity at closing.
+At the same price, assuming the debt returns 5.73% against 3.36% with new 5-year agency debt: about 237 bps. It also needs about $737,000 less equity at closing.
 
 But the benefit lasts only three years, which is why the exit plan matters as much as it does.
 
@@ -103,7 +103,7 @@ But the benefit lasts only three years, which is why the exit plan matters as mu
 In December 2029 the $9.45M of assumed debt has to be repaid.
 
 The new loan:
-- **Pricing.** 30-day average SOFR (3.74%) + 300 bps = 6.74%, interest-only.
+- **Pricing.** 30-day average SOFR (3.7307%, FRED SOFR30DAYAVG, 9/28/2026) + 300 bps = 6.73%, interest-only.
 - **Rate cap.** A 2-year cap at a 4.50% strike, costing 1.08% of the loan ($93,950).
 - **Sizing.** 1.25x DSCR at the capped rate (7.50%), which gives $8,699,030.
 
@@ -114,7 +114,7 @@ Funding the gap:
 At the 2031 sale there is no prepayment premium.
 
 Why floating rather than fixed:
-- The 5-year fixed alternative (7.06%) would cost a 4% premium at a sale in loan year 2. Its financing cost is 8.98% of the loan a year, against 7.28% for floating.
+- The 5-year fixed alternative (7.06%) would cost a 4% premium at a sale in loan year 2. Its financing cost is 8.98% of the loan a year, against 7.27% for floating.
 - Even with SOFR at the cap strike for both years, the floating plan returns 5.26%.
 
 ---
@@ -129,9 +129,9 @@ The GP's 10% co-invest is pari passu with the LP. The tiers are:
 At the ask, investors never reach 8%, so everything is Tier 1. The LP and GP both earn exactly the deal's 5.73%.
 
 At a $12.0M price, all three tiers pay:
-- LP 13.88%
-- GP 35.59%
-- Promote $832,934
+- LP 13.89%
+- GP 35.61%
+- Promote $833,814
 
 `WATERFALL_WALKTHROUGH.md` has the year-by-year figures.
 
@@ -139,17 +139,17 @@ At a $12.0M price, all three tiers pay:
 
 **10. What is your bid?**
 
-My maximum bid is $13,368,909 ($137,824 per unit), the price at which the LP earns exactly 8% on the base case:
+My maximum bid is $13,369,967 ($137,835 per unit), the price at which the LP earns exactly 8% on the base case:
 
 | Target | Assumed debt | New debt |
 |---|---|---|
-| 8% LP return | $13.37M | $12.57M |
-| 12% levered IRR | $12.73M | $11.92M |
-| 15% levered IRR | $12.29M | $11.46M |
+| 8% LP return | $13.37M | $12.79M |
+| 12% levered IRR | $12.73M | $12.12M |
+| 15% levered IRR | $12.29M | $11.65M |
 
 At all three assumed-debt prices, I built the full workbook and confirmed it returns the target exactly.
 
-Below about $12.6M, I assume the lender requires a paydown at assumption: $235,075 at the 15% price.
+Below about $12.6M, I assume the lender requires a paydown at assumption: $234,367 at the 15% price.
 
 ---
 
@@ -181,7 +181,7 @@ In order of how much they move the answer:
 The rents by unit type. I built them from the broker's disclosed 20.76% upside and zip-code averages, not from a rent roll.
 
 After that:
-- **Utilities.** The listing does not say who pays water, sewer and trash. I assumed the owner pays, with 60% recovered through RUBS; 50% or 70% moves IRR to 5.18% or 6.27%.
+- **Utilities.** The listing does not say who pays water, sewer and trash. I assumed the owner pays, with 60% recovered through RUBS; 50% or 70% moves IRR to 5.19% or 6.28%.
 - **Water use.** I assumed 3,000 gallons per unit per month.
 - **Refinance terms.** The floating spread and the interest-only assumption are judgment.
 
@@ -191,7 +191,7 @@ After that:
 
 The 24 classic units are renovated to the same standard as the other 73, and those units define market rent. Charging a premium on top of market would count the same upgrade twice.
 
-The renovation's value is closing a gap of about $300 per month per unit up to market. The sensitivity table shows what a premium would add: about 72 bps of IRR for each $50 per month.
+The renovation's value is closing a gap of about $300 per month per unit up to market. The sensitivity table shows what a premium would add: about 73 bps of IRR for each $50 per month.
 
 ---
 
@@ -201,13 +201,13 @@ That loan would have been repaid in its second year at a 5% premium, $436,819, w
 
 The model now compares the three exit plans in Q5 and uses the cheapest refinance that can be repaid at the sale, which moved the base case from 4.19% to 5.73%.
 
-Scenario B still uses a 10-year fixed loan with a 3% premium at the year-5 sale. A 5-year loan matched to the hold would avoid it. I flagged that change rather than making it.
+Scenario B had the same problem: a 10-year loan paying a 3% premium ($240,408) at the Year-5 sale. It now uses a 5-year agency fixed loan matched to the hold, repaid at maturity with no premium, which moved Scenario B from 2.45% to 3.36%.
 
 ---
 
 **16. How do you know the model is right?**
 
-`verify_model.py` reads only the input cells, rebuilds everything with separate code, and compares 1,078 figures with the workbook to within $1 or 1 bp. That includes:
+`verify_model.py` reads only the input cells, rebuilds everything with separate code, and compares 1,080 figures with the workbook to within $1 or 1 bp. That includes:
 - every operating line for ten years;
 - all three refinance options and all four exit plans;
 - the waterfall tier by tier;

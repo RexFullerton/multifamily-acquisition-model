@@ -25,6 +25,8 @@ STEPS = [
     ("no_paydown", "D3. Assumption paydown test (75% max LTV on price)"),
     ("classic_bug", "Bug fix: renovated classic units reach market rent from Year 2"),
     ("plan10", "E. Exit plan: short floating refi + 2-yr cap (was 10-yr fixed repaid in loan yr 2)"),
+    ("b10", "F. Scenario B: 5-yr agency fixed matched to hold (was 10-yr, 3% premium at sale)"),
+    ("sofr_old", "G. SOFR input aligned to the 9/28/2026 FRED print: 3.7307% (was 3.74%)"),
 ]
 
 

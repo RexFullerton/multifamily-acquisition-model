@@ -39,8 +39,8 @@ Investor capital is $5,095,290: LP $4,585,761, GP co-invest $509,529.
 | 1 | 451,614 | 5,051,299 | 451,614 | 0 | 406,453 | 45,161 | 0 |
 | 2 | 328,301 | 5,127,102 | 328,301 | 0 | 295,471 | 32,830 | 0 |
 | 3 | −357,752 | 5,895,022 | −357,752 | 0 | −321,977 | −35,775 | 0 |
-| 4 | 302,119 | 6,064,505 | 302,119 | 0 | 271,907 | 30,212 | 0 |
-| 5 | 5,859,878 | 689,788 | 5,859,878 | 0 | 5,273,890 | 585,988 | 0 |
+| 4 | 302,926 | 6,063,698 | 302,926 | 0 | 272,633 | 30,293 | 0 |
+| 5 | 5,860,685 | 688,108 | 5,860,685 | 0 | 5,274,616 | 586,068 | 0 |
 
 **How to read it.**
 - **Year 1.** The 8% balance grows from $5,095,290 to $5,502,913 ($5,095,290 × 1.08). Tier 1 pays out $451,614, leaving $5,051,299.
@@ -48,7 +48,7 @@ Investor capital is $5,095,290: LP $4,585,761, GP co-invest $509,529.
   - The $9,450,000 payoff is refinanced with an $8,699,030 floating loan, sized on the capped rate.
   - The cap costs $93,950. Together that needs $844,919 of cash.
   - Year-3 operations cover the rest, and investors fund $357,752, 90/10. That raises the 8% balance.
-- **Year 5.** All $5,859,878 goes to Tier 1, and $689,788 of the 8% hurdle is still unpaid. Investors never reach 8%, so Tiers 2 and 3 pay nothing.
+- **Year 5.** All $5,860,685 goes to Tier 1, and $688,108 of the 8% hurdle is still unpaid. Investors never reach 8%, so Tiers 2 and 3 pay nothing.
 - **Result.** LP IRR = GP IRR = deal IRR = 5.73%. Equity multiple = 1.29x for both. Promote = $0.
 
 That equality is the test that pari passu is implemented correctly. An earlier version put the GP's co-invest behind the LP in Tier 1: the LP got 100% of Tier 1 until it had its own 8% and capital back. At a 7.89% deal IRR, that produced an LP IRR of 9.82% and a GP IRR of −15.88%, which is not a standard structure.
@@ -68,41 +68,41 @@ That equality is the test that pari passu is implemented correctly. An earlier v
 | 1 | 510,376 | 4,013,323 | 510,376 | 3,502,947 |
 | 2 | 387,989 | 3,783,183 | 387,989 | 3,395,194 |
 | 3 | 468,076 | 3,666,810 | 468,076 | 3,198,734 |
-| 4 | 314,366 | 3,454,633 | 314,366 | 3,140,266 |
-| 5 | 5,554,509 | 3,391,487 | 3,391,487 | 0 |
+| 4 | 315,203 | 3,454,633 | 315,203 | 3,139,429 |
+| 5 | 5,555,345 | 3,390,583 | 3,390,583 | 0 |
 
-In Year 5, Tier 1 takes the $3,391,487 needed to bring the 8% balance to zero. That leaves $2,163,022.
+In Year 5, Tier 1 takes the $3,390,583 needed to bring the 8% balance to zero. That leaves $2,164,762.
 
 **Tier 2: up to a 12% investor IRR.**
-1. The 12% balance at the start of Year 5 is $3,804,914, the result of the same roll-forward at 12%.
-2. It grows to $4,261,504 and is reduced by the $3,391,487 investors just received in Tier 1. That leaves $870,017 of investor cash still needed to reach 12%.
-3. Investors get 70% of Tier 2, so Tier 2 must total $870,017 / 0.70 = $1,242,882.
-4. That splits into $870,017 to investors and $372,864 of GP promote.
+1. The 12% balance at the start of Year 5 is $3,804,078, the result of the same roll-forward at 12%.
+2. It grows to $4,260,567 and is reduced by the $3,390,583 investors just received in Tier 1. That leaves $869,984 of investor cash still needed to reach 12%.
+3. Investors get 70% of Tier 2, so Tier 2 must total $869,984 / 0.70 = $1,242,834.
+4. That splits into $869,984 to investors and $372,850 of GP promote.
 
-**Tier 3: 50/50.** The remaining $2,163,022 − $1,242,882 = $920,140 splits $460,070 to investors and $460,070 of GP promote.
+**Tier 3: 50/50.** The remaining $2,164,762 − $1,242,834 = $921,928 splits $460,964 to investors and $460,964 of GP promote.
 
 **Year 5 by party.**
 
 | | Amount |
 |---|---|
-| To investors | $3,391,487 + $870,017 + $460,070 = $4,721,574 |
-| LP (90% of investor cash) | $4,249,417 |
-| GP co-invest (10%) | $472,157 |
-| GP promote | $372,864 + $460,070 = $832,934 |
-| GP total | $1,305,092 |
-| Check: LP + GP | $5,554,509, equal to cash available |
+| To investors | $3,390,583 + $869,984 + $460,964 = $4,721,531 |
+| LP (90% of investor cash) | $4,249,378 |
+| GP co-invest (10%) | $472,153 |
+| GP promote | $372,850 + $460,964 = $833,814 |
+| GP total | $1,305,967 |
+| Check: LP + GP | $5,555,345, equal to cash available |
 
 **Returns.**
 
 | | IRR | Equity multiple |
 |---|---|---|
 | Deal | 16.98% | 1.95x |
-| LP | 13.88% | 1.72x |
-| GP (co-invest + promote) | 35.59% | 3.96x |
+| LP | 13.89% | 1.72x |
+| GP (co-invest + promote) | 35.61% | 3.97x |
 
 **What the numbers show.**
 - **Why the LP lands where it does.** The LP gives up part of the return above 12% to the promote. It lands between 12% and the 16.98% deal IRR.
-- **Where the GP's return comes from.** The GP's return comes from the $832,934 promote on $371,604 of co-invest. Without the promote, the GP would earn the same 13.88% as the LP.
+- **Where the GP's return comes from.** The GP's return comes from the $833,814 promote on $371,604 of co-invest. Without the promote, the GP would earn the same 13.89% as the LP.
 
 ## Where to find it in the workbook
 
