@@ -81,7 +81,7 @@ def load_inputs(path):
                                         "Vinyl slider window", "Modern lighting fixtures", "LVP flooring",
                                         "Bathroom refresh", "Interior paint", "Turnover labor")]
     I["reno_contg_pct"] = inp("Contingency %", exact=True)
-    I["reno_premium_mo"] = inp("Renovated-Unit Rent Premium ($/month)")
+    I["reno_premium_mo"] = inp("Renovated-Unit Rent Premium over Market ($/month)")
     I["reno_y1_capture"] = inp("Year-1 Premium Capture %")
     I["vacancy"] = inp("Physical Vacancy %")
     I["credit_loss"] = inp("Credit Loss % (of GPR)")
@@ -101,6 +101,7 @@ def load_inputs(path):
     I["ins_base"] = inp("Insurance — Base Case")
     I["ins_roof"] = inp("Insurance — If Roof Replaced")
     I["mgmt_fee_pct"] = inp("Management Fee (% of EGI)")
+    I["nav"] = inp("Non-Ad Valorem Assessments ($/unit")
     I["ga"] = inp("G&A / Admin", exact=True)
     I["marketing"] = inp("Marketing", exact=True)
     I["reserves"] = inp("Replacement Reserves (below NOI)")
@@ -127,11 +128,11 @@ def load_inputs(path):
     I["exit_spread_sens"] = inp("Exit Cap Spread over Entry — Sensitivity Ceiling")
     I["cos_exit"] = inp("Cost of Sale at Exit")
     I["pref"] = inp("Preferred Return %")
-    I["t2_lp"] = inp("Tier 2 LP Share")
-    I["t2_gp"] = inp("Tier 2 GP Share")
+    I["t2_inv"] = inp("Tier 2 Investor Share")
+    I["t2_promote"] = inp("Tier 2 GP Promote")
     I["t2_hurdle"] = inp("Tier 2 IRR Hurdle")
-    I["t3_lp"] = inp("Tier 3 LP Share")
-    I["t3_gp"] = inp("Tier 3 GP Share")
+    I["t3_inv"] = inp("Tier 3 Investor Share")
+    I["t3_promote"] = inp("Tier 3 GP Promote")
     I["gp_coinvest"] = inp("GP Co-Invest %")
 
     um = wb["Unit Mix"]
@@ -168,11 +169,67 @@ def _irr(cfs):
         return float("nan")
 
 
-def run_model(I, price=None):
-    """Full model. `price` overrides the purchase price (for bid-price solving);
-    everything that depends on price -- reassessed tax, closing costs, Scenario B
-    loan sizing, the Scenario A refinance LTV leg, entry/exit cap -- moves with it.
-    The assumed Scenario A loan balances do not."""
+def waterfall(lev_cf, equity, I):
+    """Pari passu waterfall, computed INDEPENDENTLY of the workbook's method.
+
+    The workbook rolls two compounding hurdle balances forward year by year.
+    Here each year's tier amounts are solved in closed form from the future
+    value of the entire investor cash-flow history at each hurdle rate:
+        shortfall_r(t) = max(0, E(1+r)^t - sum_{s<t} D_s (1+r)^(t-s))
+    where D_s is everything investors (LP + GP co-invest) received in year s.
+    Tier 1 = min(cash, pref shortfall); Tier 2 fills the Tier-2 shortfall at the
+    investor share; Tier 3 takes the rest. Investor cash splits LP/GP pro rata
+    to capital; the promote goes to GP. No state is carried except the history.
+    Balance rows (for comparison only) are the same closed-form FVs restricted to
+    the flows the workbook debits (Tier 1 for the pref balance; Tier 1 + investor
+    Tier 2 for the Tier-2 balance)."""
+    E, cash = equity, lev_cf[1:]
+    p, h = I["pref"], I["t2_hurdle"]
+    co = I["gp_coinvest"]
+    D, T1, T2, T3, INV2, INV3, PR2, PR3 = [], [], [], [], [], [], [], []
+    for t, av in enumerate(cash, start=1):
+        fv_p = E * (1 + p) ** t - sum(D[s - 1] * (1 + p) ** (t - s) for s in range(1, t))
+        t1 = min(av, max(0.0, fv_p))
+        fv_h = E * (1 + h) ** t - sum(D[s - 1] * (1 + h) ** (t - s) for s in range(1, t)) - t1
+        t2 = min(av - t1, max(0.0, fv_h) / I["t2_inv"])
+        t3 = av - t1 - t2
+        inv2, inv3 = t2 * I["t2_inv"], t3 * I["t3_inv"]
+        T1.append(t1); T2.append(t2); T3.append(t3); INV2.append(inv2); INV3.append(inv3)
+        PR2.append(t2 * I["t2_promote"]); PR3.append(t3 * I["t3_promote"])
+        D.append(t1 + inv2 + inv3)
+    n = len(cash)
+    pref_bal = [E] + [E * (1 + p) ** t - sum(T1[s - 1] * (1 + p) ** (t - s) for s in range(1, t + 1)) for t in range(1, n + 1)]
+    h_bal = [E] + [E * (1 + h) ** t - sum((T1[s - 1] + INV2[s - 1]) * (1 + h) ** (t - s) for s in range(1, t + 1))
+                   for t in range(1, n + 1)]
+    h_after_t1 = [h_bal[t - 1] * (1 + h) - T1[t - 1] for t in range(1, n + 1)]
+    lp = [d * (1 - co) for d in D]
+    gp_co = [d * co for d in D]
+    promote = [PR2[i] + PR3[i] for i in range(n)]
+    gp = [gp_co[i] + promote[i] for i in range(n)]
+    lp_eq, gp_eq = E * (1 - co), E * co
+    W = dict(avail=list(cash), t1=T1, t2=T2, t3=T3, inv2=INV2, inv3=INV3, pr2=PR2, pr3=PR3, inv_total=D,
+             rem1=[cash[i] - T1[i] for i in range(n)], rem2=[cash[i] - T1[i] - T2[i] for i in range(n)],
+             pref_bal=pref_bal, h_bal=h_bal, h_after_t1=h_after_t1, lp=lp, gp_co=gp_co, promote=promote, gp=gp,
+             lp_eq=lp_eq, gp_eq=gp_eq, promote_total=sum(promote))
+    W["lp_irr"], W["gp_irr"] = _irr([-lp_eq] + lp), _irr([-gp_eq] + gp)
+    W["lp_em"], W["gp_em"] = sum(lp) / lp_eq, sum(gp) / gp_eq
+    # structural assertions that hold for ANY correct pari passu waterfall
+    for i in range(n):
+        assert abs(lp[i] + gp[i] - cash[i]) < 1e-6, "LP + GP must equal available cash"
+    if W["promote_total"] < 1e-9:
+        assert abs(W["lp_irr"] - _irr(lev_cf)) < 1e-9 and abs(W["gp_irr"] - _irr(lev_cf)) < 1e-9, \
+            "no promote => LP IRR = GP IRR = deal IRR"
+    return W
+
+
+def run_model(I, price=None, exit_cap=None, refi_basis="value"):
+    """Full model. `price` overrides the purchase price (for bid-price solving):
+    reassessed tax, closing costs, Scenario B loan sizing (LTV on price; DY/DSCR on
+    NOI, which moves with tax) and equity move with it. The assumed Scenario A loan
+    balances, rents, and all other opex do not.
+    `exit_cap` freezes the exit cap (bid-price solve holds the market exit cap fixed
+    rather than letting it float with the buyer's own entry cap). Default = the
+    model rule: in-place cap at `price` + base spread."""
     P = I["price"] if price is None else price
     Y = range(NYEARS)
     ex = [(1 + I["exp_growth"]) ** y for y in Y]
@@ -215,7 +272,8 @@ def run_model(I, price=None):
     m["tax"] = [-tax_y1 * (1 + I["nonhs_cap"]) ** y for y in Y]
     m["mgmt"] = [-m["egi"][y] * I["mgmt_fee_pct"] for y in Y]
     m["ga"], m["mktg"] = line(I["ga"]), line(I["marketing"])
-    opex_keys = ["payroll", "repairs", "turnover", "contract", "util", "ins", "tax", "mgmt", "ga", "mktg"]
+    m["nav"] = line(I["nav"])  # per-unit non-ad valorem charges: not value-based
+    opex_keys = ["payroll", "repairs", "turnover", "contract", "util", "ins", "tax", "nav", "mgmt", "ga", "mktg"]
     m["opex"] = [sum(m[k][y] for k in opex_keys) for y in Y]
     m["noi"] = [m["egi"][y] + m["opex"][y] for y in Y]
     m["noi_pretax"] = [m["noi"][y] - m["tax"][y] for y in Y]
@@ -229,7 +287,7 @@ def run_model(I, price=None):
     loss_pct = I["vacancy"] + I["credit_loss"] + I["concessions"]
     m["day0_gpr"] = sum(t["classic"] * t["F"] + t["renov"] * t["G"] for t in I["types"]) * 12
     m["day0_egi"] = m["day0_gpr"] * (1 - loss_pct) + oi0
-    fixed0 = sum(m[k][0] for k in ["payroll", "repairs", "turnover", "contract", "util", "ins", "tax", "ga", "mktg"])
+    fixed0 = sum(m[k][0] for k in ["payroll", "repairs", "turnover", "contract", "util", "ins", "tax", "nav", "ga", "mktg"])
     m["day0_noi"] = m["day0_egi"] + fixed0 - m["day0_egi"] * I["mgmt_fee_pct"]
     s2_gpr = (sum(t["classic"] * t["F"] for t in I["types"])
               + sum(t["renov"] * (t["G"] + I["turnover_rate"] * I["burnoff_pct"] * (mk[t["name"]][0] - t["G"]))
@@ -241,7 +299,7 @@ def run_model(I, price=None):
     m["cap_broker"] = I["broker_cap"]
     m["cap_inplace"] = m["day0_noi"] / P
     m["cap_y1fwd"] = m["noi"][0] / P
-    m["exit_cap"] = m["cap_inplace"] + I["exit_spread_base"]
+    m["exit_cap"] = m["cap_inplace"] + I["exit_spread_base"] if exit_cap is None else exit_cap
     m["exit_cap_sens"] = m["cap_inplace"] + I["exit_spread_sens"]
     m["eff_tax_exit"] = I["millage"] * I["cos_factor"]
     m["fwd_noi_pretax"] = m["noi_pretax"][HOLD]  # Year 6
@@ -303,7 +361,9 @@ def run_model(I, price=None):
         A[key] = dict(beg=beg, int=int_, prin=prin, end=end)
     A["payoff"] = A["first"]["end"][mat - 1] + A["supp"]["end"][mat - 1]
     A["refi_noi"] = m["noi"][mat]  # year mat+1
-    A["refi_ltv"], A["refi_dy"] = P * I["ltv"], A["refi_noi"] / I["min_dy"]
+    A["refi_value"] = A["refi_noi"] / m["exit_cap"]  # appraisal at refi: in-place NOI / market cap (no reassessment)
+    A["refi_ltv"] = (A["refi_value"] if refi_basis == "value" else P) * I["ltv"]  # "price" = pre-2026-09-29 rule
+    A["refi_dy"] = A["refi_noi"] / I["min_dy"]
     A["refi_dscr"] = A["refi_noi"] / (I["min_dscr"] * rate)
     A["refi_loan"] = min(A["refi_ltv"], A["refi_dy"], A["refi_dscr"])
     A["refi_paydown"] = A["payoff"] - A["refi_loan"]
@@ -339,32 +399,12 @@ def run_model(I, price=None):
     A["lev_cf"][HOLD] += A["net_proceeds"]
     A["irr"], A["em"] = _irr(A["lev_cf"]), sum(A["lev_cf"][1:]) / A["equity"]
     A["coc1"] = A["lev_ops"][0] / A["equity"]
+    A["capital_call"] = max(0.0, -min(A["lev_ops"]))  # largest single-year shortfall funded by investors
+    A["peak_equity"] = A["equity"] + A["capital_call"]
 
-    # ---- Waterfall on Scenario A
-    W = {k: [] for k in ["avail", "t1_bal", "t1", "rem1", "t2_after", "t2", "lp_t2", "gp_t2", "t2_bal",
-                         "rem2", "t3", "lp_t3", "gp_t3", "lp", "gp"]}
-    t1_bal = t2_bal = A["lp_eq"]
-    for y in range(HOLD):
-        av = A["lev_cf"][y + 1]
-        boy1 = t1_bal * (1 + I["pref"])
-        t1 = min(av, boy1)
-        t1_bal = boy1 - t1
-        rem1 = av - t1
-        t2_after = t2_bal * (1 + I["t2_hurdle"]) - t1
-        t2 = min(rem1, max(0.0, t2_after) / I["t2_lp"])
-        lp_t2, gp_t2 = t2 * I["t2_lp"], t2 * I["t2_gp"]
-        t2_bal = t2_after - lp_t2
-        rem2 = rem1 - t2
-        lp_t3, gp_t3 = rem2 * I["t3_lp"], rem2 * I["t3_gp"]
-        for k, v in (("avail", av), ("t1_bal", t1_bal), ("t1", t1), ("rem1", rem1), ("t2_after", t2_after),
-                     ("t2", t2), ("lp_t2", lp_t2), ("gp_t2", gp_t2), ("t2_bal", t2_bal), ("rem2", rem2),
-                     ("t3", rem2), ("lp_t3", lp_t3), ("gp_t3", gp_t3), ("lp", t1 + lp_t2 + lp_t3),
-                     ("gp", gp_t2 + gp_t3)):
-            W[k].append(v)
-    W["lp_irr"] = _irr([-A["lp_eq"]] + W["lp"])
-    W["gp_irr"] = _irr([-A["gp_eq"]] + W["gp"])
-    W["lp_em"] = sum(W["lp"]) / A["lp_eq"]
-    W["gp_em"] = sum(W["gp"]) / A["gp_eq"]
+    # ---- Waterfalls (pari passu investor capital + GP promote), both scenarios
+    W = waterfall(A["lev_cf"], A["equity"], I)
+    B["W"] = waterfall(B["lev_cf"], B["equity"], I)
 
     m["B"], m["A"], m["W"] = B, A, W
     m["price"] = P
@@ -434,7 +474,8 @@ def compare(path, I, m):
                          ("Payroll", "payroll", True), ("Repairs & Maintenance", "repairs", True),
                          ("Turnover / Make-Ready", "turnover", True), ("Contract Services", "contract", True),
                          ("Utilities (owner-paid)", "util", True), ("Insurance", "ins", True),
-                         ("Property Tax (reassessed basis", "tax", False), ("Management Fee (% of EGI)", "mgmt", True),
+                         ("Property Tax (reassessed basis", "tax", False), ("Non-Ad Valorem Assessments", "nav", False),
+                         ("Management Fee (% of EGI)", "mgmt", True),
                          ("G&A / Admin", "ga", True), ("Marketing", "mktg", True),
                          ("Total Operating Expenses", "opex", True), ("NET OPERATING INCOME (NOI)", "noi", True),
                          ("memo: NOI Before Property Tax", "noi_pretax", False),
@@ -513,6 +554,7 @@ def compare(path, I, m):
         C.rows[-4:] = [(s, f"{key}: {l}", d, t, n, ok, w) for (s, l, d, t, n, ok, w) in C.rows[-4:]]
     C.scalar(DA, "Payoff Balance", A["payoff"])
     C.scalar(DA, "NOI in the refinance year", A["refi_noi"])
+    C.scalar(DA, "Value at Refinance", A["refi_value"])
     C.scalar(DA, "New Loan — LTV constraint", A["refi_ltv"])
     C.scalar(DA, "New Loan — Debt Yield constraint", A["refi_dy"])
     C.scalar(DA, "New Loan — DSCR constraint", A["refi_dscr"])
@@ -544,28 +586,46 @@ def compare(path, I, m):
     C.scalar(RA, "Levered IRR — SCENARIO A", A["irr"], tol=TOL_RATE)
     C.scalar(RA, "Levered Equity Multiple — SCENARIO A", A["em"], tol=TOL_RATE)
     C.scalar(RA, "Year-1 Cash-on-Cash — SCENARIO A", A["coc1"], tol=TOL_RATE)
+    C.scalar(RA, "Capital Call Required", A["capital_call"])
+    C.scalar(RA, "PEAK EQUITY — SCENARIO A", A["peak_equity"])
 
-    # Waterfall (Scenario A), tier by tier
+    # Waterfall (Scenario A), tier by tier -- engine uses a different (closed-form) method
     WF = "Waterfall"
     C.series(WF, "Available Cash for Distribution", W["avail"], Y5)
-    C.series(WF, "Hurdle Balance, End of Year (8% compounding)", [A["lp_eq"]] + W["t1_bal"], Y05)
-    C.series(WF, "Tier 1 Distribution to LP", W["t1"], Y5)
+    C.scalar(WF, "Investor Capital, Year 0", A["equity"])
+    C.series(WF, "Investor Pref Hurdle Balance, End of Year", W["pref_bal"], Y05)
+    C.series(WF, "Tier 1 Distribution to Investors", W["t1"], Y5)
     C.series(WF, "Remaining Cash After Tier 1", W["rem1"], Y5)
-    C.series(WF, "12% Hurdle Balance, End of Year", [A["lp_eq"]] + W["t2_bal"], Y05)
-    C.series(WF, "12% Hurdle Balance After Tier-1 Cash Applied", W["t2_after"], Y5)
+    C.series(WF, "Investor Tier-2 Hurdle Balance, End of Year", W["h_bal"], Y05)
+    C.series(WF, "Tier-2 Hurdle Balance After Tier-1 Cash Applied", W["h_after_t1"], Y5)
     C.series(WF, "Tier 2 Total Distribution", W["t2"], Y5)
-    C.series(WF, "LP share (70%)", W["lp_t2"], Y5)
-    C.series(WF, "GP share (30%)", W["gp_t2"], Y5)
+    C.series(WF, "Tier 2 to investors", W["inv2"], Y5)
+    C.series(WF, "Tier 2 GP promote", W["pr2"], Y5)
     C.series(WF, "Remaining Cash After Tier 2", W["rem2"], Y5)
     C.series(WF, "Tier 3 Total Distribution", W["t3"], Y5)
-    C.series(WF, "LP share (50%)", W["lp_t3"], Y5)
-    C.series(WF, "GP share (50%)", W["gp_t3"], Y5)
-    C.series(WF, "LP Total Distribution", [-A["lp_eq"]] + W["lp"], Y05)
-    C.series(WF, "GP Total Distribution", [-A["gp_eq"]] + W["gp"], Y05)
+    C.series(WF, "Tier 3 to investors", W["inv3"], Y5)
+    C.series(WF, "Tier 3 GP promote", W["pr3"], Y5)
+    C.series(WF, "Total to Investors", [0.0] + W["inv_total"], Y05)
+    C.series(WF, "LP Total Distribution", [-W["lp_eq"]] + W["lp"], Y05)
+    C.series(WF, "GP Co-Invest Distribution", [-W["gp_eq"]] + W["gp_co"], Y05)
+    C.series(WF, "GP Promote (Tier 2 + Tier 3)", [0.0] + W["promote"], Y05)
+    C.series(WF, "GP Total Distribution", [-W["gp_eq"]] + W["gp"], Y05)
     C.scalar(WF, "LP IRR", W["lp_irr"], tol=TOL_RATE, exact=True)
-    C.scalar(WF, "GP IRR", W["gp_irr"], tol=TOL_RATE, exact=True)
+    C.scalar(WF, "GP IRR (co-invest + promote)", W["gp_irr"], tol=TOL_RATE)
     C.scalar(WF, "LP Equity Multiple", W["lp_em"], tol=TOL_RATE, exact=True)
-    C.scalar(WF, "GP Equity Multiple", W["gp_em"], tol=TOL_RATE, exact=True)
+    C.scalar(WF, "GP Equity Multiple (co-invest + promote)", W["gp_em"], tol=TOL_RATE)
+    C.scalar(WF, "Total GP Promote over the hold", W["promote_total"])
+
+    # Summary headline cells (what gets quoted)
+    SM = "Summary"
+    C.scalar(SM, "Levered IRR (deal-level, Scenario A)", A["irr"], tol=TOL_RATE)
+    C.scalar(SM, "Levered Equity Multiple (deal-level, Scenario A)", A["em"], tol=TOL_RATE)
+    C.scalar(SM, "Unlevered IRR (debt-agnostic)", m["unlev_irr"], tol=TOL_RATE)
+    C.scalar(SM, "LP IRR (Scenario A)", W["lp_irr"], tol=TOL_RATE)
+    C.scalar(SM, "GP IRR (Scenario A)", W["gp_irr"], tol=TOL_RATE)
+    C.scalar(SM, "2. In-Place Cap Rate", m["cap_inplace"], tol=TOL_RATE)
+    C.scalar(SM, "Exit Cap Rate (base case", m["exit_cap"], tol=TOL_RATE)
+    C.scalar(SM, "Sponsor Equity", A["equity"], exact=True)
     return C
 
 
@@ -594,7 +654,7 @@ def main():
     print(f"\nHeadline (recomputed independently): unlevered IRR {m['unlev_irr']:.2%} | "
           f"Scen A levered IRR {m['A']['irr']:.2%} / {m['A']['em']:.2f}x | "
           f"Scen B levered IRR {m['B']['irr']:.2%} / {m['B']['em']:.2f}x | "
-          f"LP IRR {m['W']['lp_irr']:.2%} / {m['W']['lp_em']:.2f}x | GP IRR {m['W']['gp_irr']:.2%}")
+          f"LP IRR {m['W']['lp_irr']:.2%} / {m['W']['lp_em']:.2f}x | GP IRR {m['W']['gp_irr']:.2%} | promote ${m['W']['promote_total']:,.0f}")
 
 
 if __name__ == "__main__":
