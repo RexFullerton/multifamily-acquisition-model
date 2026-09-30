@@ -76,7 +76,7 @@ def load_inputs(path):
     I["millage"] = inp("Combined Millage Rate")
     I["seller_taxable"] = inp("Seller's Current TAXABLE Value")
     I["cos_factor"] = inp("Cost-of-Sale Factor")
-    I["nonhs_cap"] = inp("Non-Homestead Annual Assessment Cap")
+    I["nonhs_cap"] = inp("Non-Homestead Assessment Cap")  # reference only (used by the change bridge's legacy case)
     I["reno_lines"] = [inp(x) for x in ("Kitchen (cabinet refacing", "Mini-split ductless AC",
                                         "Vinyl slider window", "Modern lighting fixtures", "LVP flooring",
                                         "Bathroom refresh", "Interior paint", "Turnover labor")]
@@ -86,7 +86,8 @@ def load_inputs(path):
     I["vacancy"] = inp("Physical Vacancy %")
     I["credit_loss"] = inp("Credit Loss % (of GPR)")
     I["concessions"] = inp("Concessions % (of GPR)")
-    I["other_income_mo"] = inp("Other Income ($/unit/month)")
+    I["other_income_mo"] = inp("Other Income ex-Utility Recovery")
+    I["rubs_pct"] = inp("Utility Reimbursement (RUBS) Recovery %")
     I["burnoff_pct"] = inp("Loss-to-Lease Burn-off % per Turnover")
     I["turnover_rate"] = inp("Annual Turnover Rate %")
     I["reno_headstart"] = inp("Prior-Owner-Renovated Units: Starting Capture")
@@ -97,7 +98,17 @@ def load_inputs(path):
     I["repairs"] = inp("Repairs & Maintenance", exact=True)
     I["turnover_cost"] = inp("Turnover / Make-Ready", exact=True)
     I["contract_svc"] = inp("Contract Services (landscaping")
-    I["utilities"] = inp("Utilities (owner-paid")
+    I["utilities"] = inp("Utilities — Common-Area Electric")
+    I["w_unit"] = inp("Water Service Charge per Unit")
+    I["w_kgal"] = inp("Water Commodity Charge")
+    I["s_unit"] = inp("Sewer Service Charge per Unit")
+    I["s_kgal"] = inp("Sewer Flow Charge")
+    I["kgal"] = inp("Water Use per Unit")
+    I["meters"] = inp("Number of Water Meters")
+    I["meter_chg"] = inp("Monthly Service Charge per 2-inch Meter")
+    I["ws_growth"] = inp("Water & Sewer Cost Growth %")
+    I["trash_n"] = inp("Trash Containers")
+    I["trash_rate"] = inp("City Rate per 6-yd Container")
     I["ins_base"] = inp("Insurance — Base Case")
     I["ins_roof"] = inp("Insurance — If Roof Replaced")
     I["mgmt_fee_pct"] = inp("Management Fee (% of EGI)")
@@ -110,13 +121,13 @@ def load_inputs(path):
     I["recert_year"] = inp("Recertification Year")
     I["recert_inspect"] = inp("Recertification Inspection Cost")
     I["recert_remed"] = inp("Recertification Remediation Contingency")
-    I["sofr"] = inp("1-Month SOFR")
-    I["spread"] = inp("Spread (bps over SOFR)")
+    I["ust10"] = inp("10-Year Treasury Yield")
+    I["agency_spread"] = inp("Agency Spread over 10-Year Treasury")
     I["ltv"] = inp("Maximum LTV %")
     I["min_dscr"] = inp("Minimum DSCR")
-    I["min_dy"] = inp("Minimum Debt Yield %")
     I["io_years"] = inp("Interest-Only Period (years)")
     I["amort_years"] = inp("Amortization (years)")
+    I["prepay"] = [inp(f"Prepayment Premium, Loan Year {i}", exact=True) for i in range(1, 11)]
     I["a_first_bal"] = inp("First Mortgage Balance")
     I["a_first_rate"] = inp("First Mortgage Rate")
     I["a_mat"] = int(inp("First Mortgage Maturity"))
@@ -124,9 +135,15 @@ def load_inputs(path):
     I["a_supp_rate"] = inp("Supplemental Loan Rate")
     I["a_io"] = inp("Both Loans Interest-Only")
     I["a_fee_pct"] = inp("Loan Assumption Fee")
-    I["exit_spread_base"] = inp("Exit Cap Spread over Entry — Base Case")
-    I["exit_spread_sens"] = inp("Exit Cap Spread over Entry — Sensitivity Ceiling")
+    I["a_max_ltv"] = inp("Assumption Approval: Max LTV")
+    I["exit_anchor"] = inp("Exit Cap — Market Anchor")
+    I["exit_vintage"] = inp("Exit Cap — Spread for Class C")
     I["cos_exit"] = inp("Cost of Sale at Exit")
+    I["sens_exit_step"] = inp("Sensitivity Step — Exit Cap")
+    I["sens_price_step"] = inp("Sensitivity Step — Purchase Price")
+    I["sens_growth_step"] = inp("Sensitivity Step — Market Rent Growth")
+    I["sens_cost_step"] = inp("Sensitivity Step — Renovation Cost")
+    I["sens_prem_step"] = inp("Sensitivity Step — Renovation Premium")
     I["pref"] = inp("Preferred Return %")
     I["t2_inv"] = inp("Tier 2 Investor Share")
     I["t2_promote"] = inp("Tier 2 GP Promote")
@@ -222,19 +239,27 @@ def waterfall(lev_cf, equity, I):
     return W
 
 
-def run_model(I, price=None, exit_cap=None, refi_basis="value"):
-    """Full model. `price` overrides the purchase price (for bid-price solving):
-    reassessed tax, closing costs, Scenario B loan sizing (LTV on price; DY/DSCR on
-    NOI, which moves with tax) and equity move with it. The assumed Scenario A loan
-    balances, rents, and all other opex do not.
-    `exit_cap` freezes the exit cap (bid-price solve holds the market exit cap fixed
-    rather than letting it float with the buyer's own entry cap). Default = the
-    model rule: in-place cap at `price` + base spread."""
+# Pre-2026-09-29-evening inputs that no longer exist in the workbook. Used ONLY to reproduce the
+# prior base case (5.20%) as the starting row of the change bridge (bridge.py). Values are the
+# ones in commit efb3da1's Assumptions tab.
+LEGACY_INPUTS = dict(other_income_mo=35.0, contract_svc=450.0, rate=0.0385 + 0.0325, ltv=0.65, min_dy=0.08,
+                     io_years=2, exit_spread=0.005)
+LEGACY_FLAGS = ("classic_bug", "tax10", "util_old", "exit_old", "debt_old", "no_prepay", "no_paydown")
+
+
+def run_model(I, price=None, exit_cap=None, legacy=()):
+    """Full model. `price` overrides the purchase price (bid-price solve and sensitivity grids):
+    reassessed tax, closing costs, the Scenario B LTV leg, the assumption paydown test and equity
+    move with it. `exit_cap` overrides the direct exit-cap input (sensitivity grids).
+    `legacy` switches individual changes OFF to rebuild the prior base case for the change bridge;
+    the default (empty) is the current model. Flags: classic_bug, tax10, util_old, exit_old,
+    debt_old, no_prepay, no_paydown."""
+    L = set(legacy)
+    assert L <= set(LEGACY_FLAGS), L
     P = I["price"] if price is None else price
     Y = range(NYEARS)
     ex = [(1 + I["exp_growth"]) ** y for y in Y]
     u = I["units"]
-    rate = I["sofr"] + I["spread"]
     m = {}
 
     # rent tracks
@@ -244,8 +269,12 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
         for y in Y:
             g = I["growth"][y]
             mv = t["H"] * (1 + g) if y == 0 else a[-1] * (1 + g)
-            cv = (t["F"] * (1 - I["reno_y1_capture"]) + (mv + I["reno_premium_mo"]) * I["reno_y1_capture"]
-                  if y == 0 else b[-1] * (1 + g))
+            if y == 0:  # renovation program runs through Year 1: blended in-place / renovated rent
+                cv = t["F"] * (1 - I["reno_y1_capture"]) + (mv + I["reno_premium_mo"]) * I["reno_y1_capture"]
+            elif "classic_bug" in L:  # prior model: kept compounding the Year-1 blend (never reached market)
+                cv = b[-1] * (1 + g)
+            else:  # renovated from Year 2 on: market rent plus any premium
+                cv = mv + I["reno_premium_mo"]
             base = t["G"] if y == 0 else c[-1]
             pv = base + I["turnover_rate"] * I["burnoff_pct"] * (mv - base)
             a.append(mv); b.append(cv); c.append(pv)
@@ -259,22 +288,42 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
     m["vac"] = [-x * I["vacancy"] for x in m["sched"]]
     m["cl"] = [-x * I["credit_loss"] for x in m["sched"]]
     m["con"] = [-x * I["concessions"] for x in m["sched"]]
-    m["oi"] = [u * I["other_income_mo"] * 12 * ex[y] for y in Y]
-    m["egi"] = [m["sched"][y] + m["vac"][y] + m["cl"][y] + m["con"][y] + m["oi"][y] for y in Y]
+
+    # --- utilities: owner-paid water/sewer (city tariff build) + trash (city rate), RUBS recovery
+    if "util_old" in L:
+        oi_mo, contract = LEGACY_INPUTS["other_income_mo"], LEGACY_INPUTS["contract_svc"]
+        m["ws_unit_yr"] = m["trash_unit_yr"] = 0.0
+        rubs_pct = 0.0
+    else:
+        oi_mo, contract = I["other_income_mo"], I["contract_svc"]
+        monthly = (I["w_unit"] + I["kgal"] * I["w_kgal"]) + (I["s_unit"] + I["kgal"] * I["s_kgal"])
+        m["ws_unit_yr"] = monthly * 12 + I["meters"] * I["meter_chg"] * 12 / u
+        m["trash_unit_yr"] = I["trash_n"] * I["trash_rate"] * 12 / u
+        rubs_pct = I["rubs_pct"]
+    m["ws"] = [-u * m["ws_unit_yr"] * (1 + I["ws_growth"]) ** y for y in Y]
+    m["trash"] = [-u * m["trash_unit_yr"] * ex[y] for y in Y]
+    m["oi"] = [u * oi_mo * 12 * ex[y] for y in Y]
+    m["rubs"] = [-rubs_pct * (m["ws"][y] + m["trash"][y]) for y in Y]
+    m["egi"] = [m["sched"][y] + m["vac"][y] + m["cl"][y] + m["con"][y] + m["oi"][y] + m["rubs"][y] for y in Y]
 
     def line(base):
         return [-u * base * ex[y] for y in Y]
     m["payroll"], m["repairs"], m["turnover"] = line(I["payroll"]), line(I["repairs"]), line(I["turnover_cost"])
-    m["contract"], m["util"] = line(I["contract_svc"]), line(I["utilities"])
+    m["contract"], m["util"] = line(contract), line(I["utilities"])
     ins_base = I["ins_roof"] if I["roof_toggle"] == 1 else I["ins_base"]
     m["ins"] = [-u * ins_base * (1 + I["ins_growth"]) ** y for y in Y]
+    # Property tax: reassessed at purchase (price x cost-of-sale factor x millage), then grows with
+    # JUST VALUE. The model ties just-value growth to its terminal market rent growth. The 10% cap
+    # (Fla. Stat. 193.1555(3)) is a ceiling on assessed-value increases for non-school levies, not
+    # a growth rate; it does not bind at 3%.
+    m["tax_growth"] = I["nonhs_cap"] if "tax10" in L else I["growth"][-1]
     tax_y1 = P * I["cos_factor"] * I["millage"]
-    m["tax"] = [-tax_y1 * (1 + I["nonhs_cap"]) ** y for y in Y]
+    m["tax"] = [-tax_y1 * (1 + m["tax_growth"]) ** y for y in Y]
     m["mgmt"] = [-m["egi"][y] * I["mgmt_fee_pct"] for y in Y]
     m["ga"], m["mktg"] = line(I["ga"]), line(I["marketing"])
     m["nav"] = line(I["nav"])  # per-unit non-ad valorem charges: not value-based
-    opex_keys = ["payroll", "repairs", "turnover", "contract", "util", "ins", "tax", "nav", "mgmt", "ga", "mktg"]
-    m["opex"] = [sum(m[k][y] for k in opex_keys) for y in Y]
+    fixed_keys = ["payroll", "repairs", "turnover", "contract", "util", "ws", "trash", "ins", "tax", "nav", "ga", "mktg"]
+    m["opex"] = [sum(m[k][y] for k in fixed_keys) + m["mgmt"][y] for y in Y]
     m["noi"] = [m["egi"][y] + m["opex"][y] for y in Y]
     m["noi_pretax"] = [m["noi"][y] - m["tax"][y] for y in Y]
     m["reserves"] = [-u * I["reserves"] * ex[y] for y in Y]
@@ -282,12 +331,12 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
                   - ((I["recert_inspect"] + I["recert_remed"]) if (y + 1) == I["recert_year"] else 0.0) for y in Y]
     m["ucf"] = [m["noi"][y] + m["reserves"][y] + m["capex"][y] for y in Y]
 
-    # Day-0 bridge and cap rates
-    oi0 = u * I["other_income_mo"] * 12
+    # Day-0 bridge and cap rates (other income + RUBS at Year-1 levels; fixed opex = Year 1)
+    oi0 = m["oi"][0] + m["rubs"][0]
     loss_pct = I["vacancy"] + I["credit_loss"] + I["concessions"]
     m["day0_gpr"] = sum(t["classic"] * t["F"] + t["renov"] * t["G"] for t in I["types"]) * 12
     m["day0_egi"] = m["day0_gpr"] * (1 - loss_pct) + oi0
-    fixed0 = sum(m[k][0] for k in ["payroll", "repairs", "turnover", "contract", "util", "ins", "tax", "nav", "ga", "mktg"])
+    fixed0 = sum(m[k][0] for k in fixed_keys)
     m["day0_noi"] = m["day0_egi"] + fixed0 - m["day0_egi"] * I["mgmt_fee_pct"]
     s2_gpr = (sum(t["classic"] * t["F"] for t in I["types"])
               + sum(t["renov"] * (t["G"] + I["turnover_rate"] * I["burnoff_pct"] * (mk[t["name"]][0] - t["G"]))
@@ -299,8 +348,14 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
     m["cap_broker"] = I["broker_cap"]
     m["cap_inplace"] = m["day0_noi"] / P
     m["cap_y1fwd"] = m["noi"][0] / P
-    m["exit_cap"] = m["cap_inplace"] + I["exit_spread_base"] if exit_cap is None else exit_cap
-    m["exit_cap_sens"] = m["cap_inplace"] + I["exit_spread_sens"]
+
+    # Exit cap: a direct market input (anchor + Class C / vintage spread), NOT derived from this deal
+    if exit_cap is not None:
+        m["exit_cap"] = exit_cap
+    elif "exit_old" in L:
+        m["exit_cap"] = m["cap_inplace"] + LEGACY_INPUTS["exit_spread"]
+    else:
+        m["exit_cap"] = I["exit_anchor"] + I["exit_vintage"]
     m["eff_tax_exit"] = I["millage"] * I["cos_factor"]
     m["fwd_noi_pretax"] = m["noi_pretax"][HOLD]  # Year 6
     m["exit_price"] = m["fwd_noi_pretax"] / (m["exit_cap"] + m["eff_tax_exit"])
@@ -317,38 +372,72 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
     m["unlev_irr"] = _irr(m["unlev_cf"])
     m["unlev_em"] = sum(m["unlev_cf"][1:]) / m["uses_b"]
 
-    # ---- Scenario B: new debt
+    # ---- debt terms: agency fixed (10-yr UST + spread), sized on LTV and DSCR on AMORTIZING debt service
+    old = "debt_old" in L
+    rate = LEGACY_INPUTS["rate"] if old else I["ust10"] + I["agency_spread"]
+    ltv = LEGACY_INPUTS["ltv"] if old else I["ltv"]
+    io = LEGACY_INPUTS["io_years"] if old else I["io_years"]
+    am = I["amort_years"]
+    const = _pmt(rate, am, 1.0)  # annual mortgage constant
+    m["rate"], m["const"] = rate, const
+
+    def size(noi, value):
+        legs = {"LTV": value * ltv}
+        if old:
+            legs["Debt Yield"] = noi / LEGACY_INPUTS["min_dy"]
+            legs["DSCR"] = noi / (I["min_dscr"] * rate)  # prior model sized DSCR on IO debt service
+        else:
+            legs["DSCR"] = noi / (I["min_dscr"] * const)
+        amt = min(legs.values())
+        return amt, legs, next(k for k, v in legs.items() if v == amt)
+
+    def prepay_pct(loan_year):
+        if "no_prepay" in L or loan_year < 1:
+            return 0.0
+        return I["prepay"][int(loan_year) - 1]
+
+    # ---- Scenario B: new agency debt
     B = {}
     noi1 = m["noi"][0]
-    B["loan_ltv"], B["loan_dy"], B["loan_dscr"] = P * I["ltv"], noi1 / I["min_dy"], noi1 / (I["min_dscr"] * rate)
-    B["loan"] = min(B["loan_ltv"], B["loan_dy"], B["loan_dscr"])
-    B["binding"] = ("LTV" if B["loan"] == B["loan_ltv"] else "Debt Yield" if B["loan"] == B["loan_dy"] else "DSCR")
-    B["pmt"] = _pmt(rate, I["amort_years"], B["loan"])
+    B["loan"], legs, B["binding"] = size(noi1, P)
+    B["loan_ltv"], B["loan_dscr"] = legs["LTV"], legs["DSCR"]
+    B["loan_dy"] = legs.get("Debt Yield")
+    B["pmt"] = _pmt(rate, am, B["loan"])
     B["beg"], B["int"], B["prin"], B["ds"], B["end"] = [], [], [], [], []
     bal = B["loan"]
     for y in range(1, HOLD + 1):
         i_ = bal * rate
-        p_ = 0.0 if y <= I["io_years"] else B["pmt"] - i_
+        p_ = 0.0 if y <= io else B["pmt"] - i_
         B["beg"].append(bal); B["int"].append(i_); B["prin"].append(p_); B["ds"].append(i_ + p_)
         bal -= p_
         B["end"].append(bal)
+    B["dscr1"] = noi1 / B["ds"][0]
     B["equity"] = m["uses_b"] - B["loan"]
     B["lp_eq"], B["gp_eq"] = B["equity"] * (1 - I["gp_coinvest"]), B["equity"] * I["gp_coinvest"]
     B["payoff"] = -B["end"][-1]
-    B["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + B["payoff"]
+    B["prepay_pct"] = prepay_pct(HOLD)  # sold at the end of loan year 5
+    B["prepay"] = -B["end"][-1] * B["prepay_pct"]
+    B["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + B["payoff"] + B["prepay"]
     B["lev_ops"] = [m["ucf"][y] - B["ds"][y] for y in range(HOLD)]
     B["lev_cf"] = [-B["equity"]] + list(B["lev_ops"])
     B["lev_cf"][HOLD] += B["net_proceeds"]
     B["irr"], B["em"] = _irr(B["lev_cf"]), sum(B["lev_cf"][1:]) / B["equity"]
     B["coc"] = [x / B["equity"] for x in B["lev_ops"]]
 
-    # ---- Scenario A: assumed first + supplemental, refinance after maturity
+    # ---- Scenario A: assumed first + supplemental (after any lender-required paydown), refi after maturity
     A = {}
     mat = I["a_mat"]
-    for key, bal0, r_ in (("first", I["a_first_bal"], I["a_first_rate"]), ("supp", I["a_supp_bal"], I["a_supp_rate"])):
+    L0 = I["a_first_bal"] + I["a_supp_bal"]
+    A["max_assumable"] = P * I["a_max_ltv"]
+    A["assume_paydown"] = 0.0 if "no_paydown" in L else max(0.0, L0 - A["max_assumable"])
+    A["paydown_supp"] = min(A["assume_paydown"], I["a_supp_bal"])
+    A["paydown_first"] = A["assume_paydown"] - A["paydown_supp"]
+    first0 = I["a_first_bal"] - A["paydown_first"]
+    supp0 = I["a_supp_bal"] - A["paydown_supp"]
+    for key, bal0, r_ in (("first", first0, I["a_first_rate"]), ("supp", supp0, I["a_supp_rate"])):
         beg, int_, prin, end = [], [], [], []
         bal = bal0
-        pmt_ = _pmt(r_, I["amort_years"], bal0)
+        pmt_ = _pmt(r_, am, bal0)
         for y in range(1, HOLD + 1):
             if y <= mat:
                 i_ = bal * r_
@@ -361,13 +450,11 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
         A[key] = dict(beg=beg, int=int_, prin=prin, end=end)
     A["payoff"] = A["first"]["end"][mat - 1] + A["supp"]["end"][mat - 1]
     A["refi_noi"] = m["noi"][mat]  # year mat+1
-    A["refi_value"] = A["refi_noi"] / m["exit_cap"]  # appraisal at refi: in-place NOI / market cap (no reassessment)
-    A["refi_ltv"] = (A["refi_value"] if refi_basis == "value" else P) * I["ltv"]  # "price" = pre-2026-09-29 rule
-    A["refi_dy"] = A["refi_noi"] / I["min_dy"]
-    A["refi_dscr"] = A["refi_noi"] / (I["min_dscr"] * rate)
-    A["refi_loan"] = min(A["refi_ltv"], A["refi_dy"], A["refi_dscr"])
+    A["refi_value"] = A["refi_noi"] / m["exit_cap"]  # lender appraisal proxy: in-place NOI / market cap
+    A["refi_loan"], legs, A["refi_binding"] = size(A["refi_noi"], A["refi_value"])
+    A["refi_ltv"], A["refi_dscr"], A["refi_dy"] = legs["LTV"], legs["DSCR"], legs.get("Debt Yield")
     A["refi_paydown"] = A["payoff"] - A["refi_loan"]
-    A["refi_pmt"] = _pmt(rate, I["amort_years"], A["refi_loan"])
+    A["refi_pmt"] = _pmt(rate, am, A["refi_loan"])
     beg, int_, prin, end = [], [], [], []
     bal = 0.0
     for y in range(1, HOLD + 1):
@@ -375,7 +462,7 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
             if y == mat + 1:
                 bal = A["refi_loan"]
             i_ = bal * rate
-            p_ = 0.0 if (y - mat) <= I["io_years"] else A["refi_pmt"] - i_
+            p_ = 0.0 if (y - mat) <= io else A["refi_pmt"] - i_
             beg.append(bal); int_.append(i_); prin.append(p_)
             bal -= p_
             end.append(bal)
@@ -386,13 +473,15 @@ def run_model(I, price=None, exit_cap=None, refi_basis="value"):
     A["tot_prin"] = [A["first"]["prin"][y] + A["supp"]["prin"][y] + A["refi"]["prin"][y] for y in range(HOLD)]
     A["tot_ds"] = [A["tot_int"][y] + A["tot_prin"][y] for y in range(HOLD)]
     A["tot_end"] = [A["first"]["end"][y] + A["supp"]["end"][y] + A["refi"]["end"][y] for y in range(HOLD)]
-    A["fee"] = (I["a_first_bal"] + I["a_supp_bal"]) * I["a_fee_pct"]
+    A["loan"] = first0 + supp0
+    A["fee"] = A["loan"] * I["a_fee_pct"]
     A["uses"] = m["uses_b"] + A["fee"]
-    A["loan"] = I["a_first_bal"] + I["a_supp_bal"]
     A["equity"] = A["uses"] - A["loan"]
     A["lp_eq"], A["gp_eq"] = A["equity"] * (1 - I["gp_coinvest"]), A["equity"] * I["gp_coinvest"]
     A["payoff_exit"] = -A["tot_end"][-1]
-    A["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + A["payoff_exit"]
+    A["prepay_pct"] = prepay_pct(HOLD - mat) if HOLD > mat else 0.0  # refi loan is in loan year HOLD-mat at sale
+    A["prepay"] = -A["refi"]["end"][-1] * A["prepay_pct"]
+    A["net_proceeds"] = m["exit_price"] + m["cost_of_sale"] + A["payoff_exit"] + A["prepay"]
     A["refi_short"] = [-(A["refi_paydown"] if (y + 1) == mat else 0.0) for y in range(HOLD)]
     A["lev_ops"] = [m["ucf"][y] - A["tot_ds"][y] + A["refi_short"][y] for y in range(HOLD)]
     A["lev_cf"] = [-A["equity"]] + list(A["lev_ops"])
@@ -458,8 +547,13 @@ def compare(path, I, m):
     D5 = list(range(2, 2 + HOLD))      # B..F = Years 1..5 on Debt (Assumed)
     B, A, W = m["B"], m["A"], m["W"]
 
-    # units consistency (the model's Units cell is a formula to the Unit Mix total)
+    # units consistency (the model's Units cell is a formula to the Unit Mix total) + computed Assumptions cells
     C.scalar("Assumptions", "Units (formula", I["units"], col=3, tol=0)
+    C.scalar("Assumptions", "Property Tax Growth after Reassessment", m["tax_growth"], col=3, tol=TOL_RATE)
+    C.scalar("Assumptions", "Water & Sewer Cost ($/unit/year)", m["ws_unit_yr"], col=3)
+    C.scalar("Assumptions", "Trash Cost ($/unit/year)", m["trash_unit_yr"], col=3)
+    C.scalar("Assumptions", "All-In Fixed Rate", m["rate"], col=3, tol=TOL_RATE)
+    C.scalar("Assumptions", "EXIT CAP RATE (base case)", m["exit_cap"], col=3, tol=TOL_RATE)
 
     # Operating model, every line, 10 years
     for t in I["types"]:
@@ -470,11 +564,13 @@ def compare(path, I, m):
     for lab, key, ex in [("Gross Potential Rent at Market", "market_gpr", False), ("Less: Loss-to-Lease", "ltl", False),
                          ("Gross Scheduled Rent", "sched", False), ("Less: Physical Vacancy", "vac", False),
                          ("Less: Credit Loss", "cl", False), ("Less: Concessions", "con", False),
-                         ("Plus: Other Income", "oi", False), ("Effective Gross Income (EGI)", "egi", False),
+                         ("Plus: Other Income (laundry", "oi", False), ("Plus: Utility Reimbursement", "rubs", False),
+                         ("Effective Gross Income (EGI)", "egi", False),
                          ("Payroll", "payroll", True), ("Repairs & Maintenance", "repairs", True),
                          ("Turnover / Make-Ready", "turnover", True), ("Contract Services", "contract", True),
-                         ("Utilities (owner-paid)", "util", True), ("Insurance", "ins", True),
-                         ("Property Tax (reassessed basis", "tax", False), ("Non-Ad Valorem Assessments", "nav", False),
+                         ("Utilities — common-area", "util", False), ("Water & Sewer (owner-paid", "ws", False),
+                         ("Trash (owner-paid", "trash", False), ("Insurance", "ins", True),
+                         ("Property Tax (reassessed at purchase", "tax", False), ("Non-Ad Valorem Assessments", "nav", False),
                          ("Management Fee (% of EGI)", "mgmt", True),
                          ("G&A / Admin", "ga", True), ("Marketing", "mktg", True),
                          ("Total Operating Expenses", "opex", True), ("NET OPERATING INCOME (NOI)", "noi", True),
@@ -495,9 +591,8 @@ def compare(path, I, m):
     C.scalar(R, "1. Broker-Stated Cap Rate", m["cap_broker"], tol=TOL_RATE)
     C.scalar(R, "2. In-Place Cap Rate", m["cap_inplace"], tol=TOL_RATE)
     C.scalar(R, "3. Year-1 FORWARD Cap Rate", m["cap_y1fwd"], tol=TOL_RATE)
-    C.scalar(R, "Entry Cap Rate ANCHOR", m["cap_inplace"], tol=TOL_RATE)
     C.scalar(R, "Exit Cap Rate — base case", m["exit_cap"], tol=TOL_RATE)
-    C.scalar(R, "Exit Cap Rate — sensitivity ceiling", m["exit_cap_sens"], tol=TOL_RATE)
+    C.scalar(R, "memo: exit cap minus in-place", m["exit_cap"] - m["cap_inplace"], tol=TOL_RATE)
     C.scalar(R, "Effective Tax Rate at Exit", m["eff_tax_exit"], tol=TOL_RATE)
     C.scalar(R, "Forward NOI Before Property Tax", m["fwd_noi_pretax"])
     C.scalar(R, "EXIT PRICE", m["exit_price"])
@@ -516,9 +611,11 @@ def compare(path, I, m):
     C.scalar("Capital", "Sponsor Equity (plug)", B["equity"])
     C.scalar("Capital", "LP Equity", B["lp_eq"], exact=True)
     C.scalar("Capital", "GP Equity (co-invest)", B["gp_eq"])
+    C.scalar("Debt", "Annual Mortgage Constant", m["const"], col=3, tol=1e-7)
     C.scalar("Debt", "Loan Amount — LTV Constraint", B["loan_ltv"], col=3)
-    C.scalar("Debt", "Loan Amount — Debt Yield Constraint", B["loan_dy"], col=3)
     C.scalar("Debt", "Loan Amount — DSCR Constraint", B["loan_dscr"], col=3)
+    C.scalar("Debt", "Resulting DSCR (Year 1)", B["dscr1"], col=3, tol=TOL_RATE)
+    C.scalar("Debt", "Prepayment Premium % at Sale", B["prepay_pct"], col=3, tol=TOL_RATE)
     C.scalar("Debt", "SIZED LOAN AMOUNT", B["loan"], col=3)
     C.text("Debt", "Binding Constraint", B["binding"], col=3)
     C.scalar("Debt", "Annual P&I Payment (post-IO)", B["pmt"])
@@ -532,6 +629,7 @@ def compare(path, I, m):
     C.series(R, "Less: Debt Service (Scenario B)", [-x for x in B["ds"]], Y5)
     C.series(R, "Levered CF from Operations (Scenario B)", B["lev_ops"], Y5)
     C.scalar(R, "Less: Loan Payoff (Scenario B", B["payoff"])
+    C.scalar(R, "Less: Prepayment Premium (Scenario B", B["prepay"])
     C.scalar(R, "NET SALE PROCEEDS TO EQUITY — SCENARIO B", B["net_proceeds"])
     C.series(R, "TOTAL LEVERED CASH FLOW TO EQUITY — SCENARIO B", B["lev_cf"], Y05)
     C.scalar(R, "Levered IRR — SCENARIO B", B["irr"], tol=TOL_RATE)
@@ -546,6 +644,10 @@ def compare(path, I, m):
 
     # Scenario A -- Debt (Assumed)
     DA = "Debt (Assumed)"
+    C.scalar(DA, "Max Assumable Balance", A["max_assumable"])
+    C.scalar(DA, "Required Paydown at Closing", A["assume_paydown"])
+    C.scalar(DA, "First Mortgage Balance Assumed", A["loan"] - (I["a_supp_bal"] - A["paydown_supp"]))
+    C.scalar(DA, "Supplemental Balance Assumed", I["a_supp_bal"] - A["paydown_supp"])
     for sect, key in [("FIRST MORTGAGE", "first"), ("SUPPLEMENTAL LOAN", "supp"), ("POST-REFINANCE LOAN", "refi")]:
         C.series(DA, "Beginning Balance", A[key]["beg"], D5, after=sect)
         C.series(DA, "Interest", A[key]["int"], D5, exact=True, after=sect)
@@ -556,11 +658,11 @@ def compare(path, I, m):
     C.scalar(DA, "NOI in the refinance year", A["refi_noi"])
     C.scalar(DA, "Value at Refinance", A["refi_value"])
     C.scalar(DA, "New Loan — LTV constraint", A["refi_ltv"])
-    C.scalar(DA, "New Loan — Debt Yield constraint", A["refi_dy"])
     C.scalar(DA, "New Loan — DSCR constraint", A["refi_dscr"])
     C.scalar(DA, "NEW REFI LOAN AMOUNT", A["refi_loan"])
     C.scalar(DA, "Cash Required / (Released) at Refinance", A["refi_paydown"])
     C.scalar(DA, "Annual P&I Payment (post-refi", A["refi_pmt"])
+    C.scalar(DA, "Refi Loan Prepayment Premium %", A["prepay_pct"], tol=TOL_RATE)
     C.series(DA, "Total Interest", A["tot_int"], D5)
     C.series(DA, "Total Principal", A["tot_prin"], D5)
     C.series(DA, "TOTAL DEBT SERVICE", A["tot_ds"], D5)
@@ -577,6 +679,8 @@ def compare(path, I, m):
     C.scalar(RA, "Exit Price (same tax-adjusted", m["exit_price"])
     C.scalar(RA, "Less: Cost of Sale", m["cost_of_sale"])
     C.scalar(RA, "Less: Loan Payoff (Debt (Assumed)", A["payoff_exit"])
+    C.scalar(RA, "Less: Prepayment Premium on refinance loan", A["prepay"])
+    C.scalar(RA, "memo: required paydown at assumption", A["assume_paydown"])
     C.scalar(RA, "NET SALE PROCEEDS TO EQUITY — SCENARIO A", A["net_proceeds"])
     C.series(RA, "Unlevered CF (same as Scenario B", [m["ucf"][y] for y in range(HOLD)], Y5)
     C.series(RA, "Less: Debt Service (Debt (Assumed))", [-x for x in A["tot_ds"]], Y5)
@@ -626,7 +730,66 @@ def compare(path, I, m):
     C.scalar(SM, "2. In-Place Cap Rate", m["cap_inplace"], tol=TOL_RATE)
     C.scalar(SM, "Exit Cap Rate (base case", m["exit_cap"], tol=TOL_RATE)
     C.scalar(SM, "Sponsor Equity", A["equity"], exact=True)
+    compare_sensitivity(C, I, m)
     return C
+
+
+def _grid(ws, title_prefix):
+    """Locate a sensitivity table by its section title; return (irr_rows, em_rows) as 5x5 value lists."""
+    t = _find_row(ws, title_prefix, max_row=ws.max_row + 1)
+    hdr = _find_row(ws, "rows \\ cols", start=t, max_row=ws.max_row + 1)
+    irr = [[ws.cell(row=hdr + 1 + i, column=2 + j).value for j in range(5)] for i in range(5)]
+    em = [[ws.cell(row=hdr + 7 + i, column=2 + j).value for j in range(5)] for i in range(5)]
+    return irr, em
+
+
+def compare_sensitivity(C, I, m):
+    """Every sensitivity cell (100 IRRs + 100 multiples) recomputed by a FULL re-run of this engine with
+    the axis inputs changed -- not by re-implementing the workbook's per-scenario calculation blocks."""
+    import copy
+    ws = C.ws("Sensitivity")
+    ks = [-2, -1, 0, 1, 2]
+    ec0, P0 = m["exit_cap"], I["price"]
+    es, ps, gs, cs, prs = (I["sens_exit_step"], I["sens_price_step"], I["sens_growth_step"],
+                           I["sens_cost_step"], I["sens_prem_step"])
+
+    def rec(tab, mine_irr, mine_em, theirs_irr, theirs_em, cols=range(5)):
+        for i in range(5):
+            C._record("Sensitivity", f"{tab} IRR row {i+1}", [mine_irr[i][j] for j in cols],
+                      [theirs_irr[i][j] for j in cols], TOL_RATE)
+            C._record("Sensitivity", f"{tab} EM row {i+1}", [mine_em[i][j] for j in cols],
+                      [theirs_em[i][j] for j in cols], TOL_RATE)
+
+    # Table 1 (A) and Table 4 (B): exit cap x price
+    for tab, scen, title in (("T1", "A", "TABLE 1 "), ("T4", "B", "TABLE 4 ")):
+        gi, ge = _grid(ws, title)
+        mi, me = [[None] * 5 for _ in range(5)], [[None] * 5 for _ in range(5)]
+        for i, ki in enumerate(ks):
+            for j, kj in enumerate(ks):
+                r_ = run_model(I, price=P0 * (1 + kj * ps), exit_cap=ec0 + ki * es)[scen]
+                mi[i][j], me[i][j] = r_["irr"], r_["em"]
+        rec(tab, mi, me, gi, ge)
+    # Table 3 (A): premium x reno cost
+    gi, ge = _grid(ws, "TABLE 3 ")
+    mi, me = [[None] * 5 for _ in range(5)], [[None] * 5 for _ in range(5)]
+    for i, ki in enumerate([0, 1, 2, 3, 4]):
+        for j, kj in enumerate(ks):
+            J = copy.deepcopy(I)
+            J["reno_premium_mo"] = I["reno_premium_mo"] + ki * prs
+            J["reno_lines"] = [x * (1 + kj * cs) for x in I["reno_lines"]]
+            r_ = run_model(J)["A"]
+            mi[i][j], me[i][j] = r_["irr"], r_["em"]
+    rec("T3", mi, me, gi, ge)
+    # Table 2 (A): exit cap x rent growth shift (added to every year's growth; tax growth follows terminal growth)
+    gi, ge = _grid(ws, "TABLE 2 ")
+    mi, me = [[None] * 5 for _ in range(5)], [[None] * 5 for _ in range(5)]
+    for i, ki in enumerate(ks):
+        for j, kj in enumerate(ks):
+            J = copy.deepcopy(I)
+            J["growth"] = [g + kj * gs for g in I["growth"]]
+            r_ = run_model(J, exit_cap=ec0 + ki * es)["A"]
+            mi[i][j], me[i][j] = r_["irr"], r_["em"]
+    rec("T2", mi, me, gi, ge)
 
 
 def main():

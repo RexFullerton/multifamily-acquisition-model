@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-price_solve.py -- maximum purchase price that achieves each target return,
-under both debt scenarios, using the SAME engine verify_model.py checks against
-the workbook line by line (so the solve runs on verified mechanics, not a copy).
+price_solve.py -- maximum purchase price that achieves each target return, under both debt
+scenarios, using the SAME engine verify_model.py checks against the workbook line by line.
 
 Targets
   (a) LP IRR = 8%            (LP clears the preferred return)
@@ -10,24 +9,22 @@ Targets
   (c) Levered IRR = 15%      (deal level)
 
 What moves with price (everything else held at the Assumptions-tab values):
-  - Property tax: reassessed at price x 85% cost-of-sale factor x millage.
+  - Property tax: reassessed at price x 85% cost-of-sale factor x millage (then grows with just value).
   - Closing costs: 1.5% of price.
-  - Equity: the plug (Total Uses - debt).
-  - Scenario B loan: LTV leg = 65% x price; DY/DSCR legs move only through NOI (tax).
-  - Going-in (in-place) cap rate: Day-0 NOI at that price / price.
+  - Scenario B loan: MIN(75% LTV x price, DSCR leg); the DSCR leg moves only through NOI (tax).
+  - Scenario A: the lender's assumption test -- if assumed balances exceed 75% of price, the buyer
+    pays down principal at closing (supplemental first). Below ~$12.6M this adds equity.
+  - Equity: the plug. Going-in (in-place) cap: Day-0 NOI at that price / price.
 What does NOT move:
-  - Scenario A assumed loan balances ($5.887M + $3.563M): an existing loan.
-  - Rents, other opex, renovation capex, the assumption fee.
-  - EXIT CAP (primary solve): frozen at the base-case market exit cap. The
-    model's rule (in-place cap + 50 bps) would otherwise raise the exit cap
-    whenever the buyer pays less, as if the market repriced because of what
-    this buyer paid. The floating-exit-cap solve is reported as a secondary
-    column so the difference is visible.
-  - Refinance value (Scenario A): refi-year NOI / exit cap, so it moves only
-    with NOI (tax), not with price directly.
+  - Exit cap: a direct market input (6.60%), independent of what this buyer pays.
+  - Rents, other opex, renovation capex, the refinance terms.
+
+Writes bid_prices.json (read by build_model.py for the Summary tab's Bid Price rows) and checks the
+workbook's Summary rows against a fresh solve.
 
 Usage: python3 price_solve.py [workbook.xlsx]
 """
+import json
 import sys
 from scipy.optimize import brentq
 import verify_model as V
@@ -35,96 +32,83 @@ import verify_model as V
 PATH = sys.argv[1] if len(sys.argv) > 1 else "Parkview_Crossing_Acquisition_Model.xlsx"
 I = V.load_inputs(PATH)
 BASE = V.run_model(I)
-EXIT_CAP_BASE = BASE["exit_cap"]
 UNITS = I["units"]
-LO, HI = 5_000_000, 25_000_000
+LO, HI = 6_000_000, 20_000_000
+
+TARGETS = [("lp", 0.08, "LP IRR = 8%"), ("deal", 0.12, "Levered IRR = 12%"), ("deal", 0.15, "Levered IRR = 15%")]
+SCENS = [("A", "A (base)", "Scenario A — assumed loan (BASE CASE)"), ("B", "B (alt)", "Scenario B — new agency debt (alternative)")]
 
 
-def metric(price, scen, target, frozen):
-    m = V.run_model(I, price=price, exit_cap=EXIT_CAP_BASE if frozen else None)
+def metric(price, scen, target):
+    m = V.run_model(I, price=price)
     S = m[scen]
     W = S["W"] if scen == "B" else m["W"]
-    if S["equity"] <= 0:
-        return None, m  # debt exceeds uses: not a coherent structure
-    val = W["lp_irr"] if target == "lp" else S["irr"]
-    return val, m
+    return (W["lp_irr"] if target == "lp" else S["irr"]), m
 
 
-def floor_price(scen):
-    """Lowest price at which equity is positive. Scenario A: the assumed loan is fixed, so
-    equity = price x (1 + closing%) + reno capex + assumption fee - assumed loan = 0 solves in closed form."""
-    if scen == "B":
-        return LO
-    A = BASE["A"]
-    return (A["loan"] - BASE["reno_total"] - A["fee"]) / (1 + I["closing_pct"])
-
-
-def solve(scen, target, rate, frozen):
-    lo = max(LO, floor_price(scen) + 1_000)
-    g = lambda p: metric(p, scen, target, frozen)[0] - rate
-    try:
-        glo, ghi = g(lo), g(HI)
-    except TypeError:
-        return None
-    if glo * ghi > 0:
-        return dict(unreachable=True, at_floor=glo + rate, floor=lo)
-    p = brentq(g, lo, HI, xtol=1.0)
-    val, m = metric(p, scen, target, frozen)
+def solve(scen, target, rate):
+    g = lambda p: metric(p, scen, target)[0] - rate
+    glo, ghi = g(LO), g(HI)
+    if glo != glo or ghi != ghi or glo * ghi > 0:  # nan or no sign change
+        return dict(unreachable=True)
+    p = brentq(g, LO, HI, xtol=1.0)
+    _, m = metric(p, scen, target)
     S = m[scen]
     W = S["W"] if scen == "B" else m["W"]
-    return dict(unreachable=False, price=p, ppu=p / UNITS, cap_inplace=m["cap_inplace"], cap_y1=m["cap_y1fwd"],
+    return dict(unreachable=False, price=p, ppu=p / UNITS, vs_ask=p / BASE["price"] - 1, cap_inplace=m["cap_inplace"],
                 deal_irr=S["irr"], lp_irr=W["lp_irr"], gp_irr=W["gp_irr"], equity=S["equity"],
-                exit_cap=m["exit_cap"], disc=p / BASE["price"] - 1)
-
-
-TARGETS = [("lp", 0.08, "(a) LP IRR = 8%"), ("deal", 0.12, "(b) Levered IRR = 12%"), ("deal", 0.15, "(c) Levered IRR = 15%")]
-SCENS = [("A", "Scenario A — assumed loan (BASE CASE)"), ("B", "Scenario B — new debt (alternative)")]
+                debt_memo=(m["A"]["assume_paydown"] if scen == "A" else m["B"]["loan"]),
+                binding=(None if scen == "A" else m["B"]["binding"]))
 
 
 def run():
-    out = {}
-    print(f"Base case at ${BASE['price']:,.0f} (${BASE['price']/UNITS:,.0f}/unit): "
-          f"in-place cap {BASE['cap_inplace']:.2%}, exit cap {EXIT_CAP_BASE:.2%}, "
-          f"A levered {BASE['A']['irr']:.2%} (LP {BASE['W']['lp_irr']:.2%}), "
-          f"B levered {BASE['B']['irr']:.2%} (LP {BASE['B']['W']['lp_irr']:.2%})")
-    print(f"Scenario A equity turns negative below ${floor_price('A'):,.0f} (assumed $9.45M loan > Total Uses).\n")
-    for scen, slab in SCENS:
+    out = []
+    print(f"Base case at ${BASE['price']:,.0f} (${BASE['price']/UNITS:,.0f}/unit): in-place cap {BASE['cap_inplace']:.2%}, "
+          f"exit cap {BASE['exit_cap']:.2%}, A levered {BASE['A']['irr']:.2%} (LP {BASE['W']['lp_irr']:.2%}), "
+          f"B levered {BASE['B']['irr']:.2%}\n")
+    for scen, short, slab in SCENS:
         print(slab)
-        print(f"  {'Target':24s}{'Max price':>14s}{'$/unit':>10s}{'vs ask':>8s}{'In-place cap':>13s}"
-              f"{'Deal IRR':>10s}{'LP IRR':>8s}{'GP IRR':>8s}{'| float-exit price':>20s}")
+        print(f"  {'Target':20s}{'Max price':>14s}{'$/unit':>10s}{'vs ask':>8s}{'In-place cap':>13s}{'Deal IRR':>10s}"
+              f"{'LP IRR':>8s}{'GP IRR':>8s}{'Equity':>13s}{'A paydown / B loan':>20s}")
         for key, rate, tlab in TARGETS:
-            r = solve(scen, key, rate, frozen=True)
-            f = solve(scen, key, rate, frozen=False)
-            out[(scen, tlab)] = (r, f)
-            fstr = "unreachable" if (f is None or f["unreachable"]) else f"${f['price']:,.0f}"
-            if r is None or r["unreachable"]:
-                print(f"  {tlab:24s}{'UNREACHABLE above the structural floor':>63s}{fstr:>20s}")
+            r = solve(scen, key, rate)
+            label = f"{short}: {tlab}"
+            if r["unreachable"]:
+                print(f"  {tlab:20s}  UNREACHABLE between ${LO:,.0f} and ${HI:,.0f}")
+                out.append(dict(label=label, unreachable=True, note=f"not reachable between ${LO/1e6:.0f}M and ${HI/1e6:.0f}M"))
                 continue
-            print(f"  {tlab:24s}{r['price']:>14,.0f}{r['ppu']:>10,.0f}{r['disc']:>8.1%}{r['cap_inplace']:>13.2%}"
-                  f"{r['deal_irr']:>10.2%}{r['lp_irr']:>8.2%}{r['gp_irr']:>8.2%}{fstr:>20s}")
+            memo = f"{r['debt_memo']:,.0f}" + (f" ({r['binding']})" if r["binding"] else "")
+            print(f"  {tlab:20s}{r['price']:>14,.0f}{r['ppu']:>10,.0f}{r['vs_ask']:>8.1%}{r['cap_inplace']:>13.2%}"
+                  f"{r['deal_irr']:>10.2%}{r['lp_irr']:>8.2%}{r['gp_irr']:>8.2%}{r['equity']:>13,.0f}{memo:>20s}")
+            out.append(dict(label=label, **{k: v for k, v in r.items() if k != "binding"}))
         print()
     return out
 
 
-def check_summary(out, path):
-    """Staleness guard: the Summary tab's Bid Price rows are typed values -- flag drift vs. a fresh solve."""
+def check_summary(rows, path):
+    """Staleness guard: the Summary tab's Bid Price rows are solver output -- flag drift vs. a fresh solve."""
     import openpyxl
     ws = openpyxl.load_workbook(path, data_only=True)["Summary"]
-    key = {"A (base): LP IRR = 8%": ("A", "(a) LP IRR = 8%"), "A (base): Levered IRR = 12%": ("A", "(b) Levered IRR = 12%"),
-           "A (base): Levered IRR = 15%": ("A", "(c) Levered IRR = 15%"), "B (alt): LP IRR = 8%": ("B", "(a) LP IRR = 8%"),
-           "B (alt): Levered IRR = 12%": ("B", "(b) Levered IRR = 12%"), "B (alt): Levered IRR = 15%": ("B", "(c) Levered IRR = 15%")}
-    stale = 0
-    for r in range(1, ws.max_row + 1):
-        lab = ws.cell(row=r, column=1).value
-        if lab in key:
-            fresh = out[key[lab]][0]
-            typed = ws.cell(row=r, column=2).value
-            if fresh is None or fresh.get("unreachable") or abs(fresh["price"] - typed) > 1000:
+    fresh = {r["label"]: r for r in rows}
+    seen, stale = 0, 0
+    for rr in range(1, ws.max_row + 1):
+        lab = ws.cell(row=rr, column=1).value
+        if lab in fresh:
+            seen += 1
+            f, typed = fresh[lab], ws.cell(row=rr, column=2).value
+            if f.get("unreachable") != (not isinstance(typed, (int, float))) or \
+               (not f.get("unreachable") and abs(f["price"] - typed) > 1000):
                 stale += 1
-                print(f"  STALE Summary row '{lab}': typed {typed}, fresh {None if not fresh or fresh.get('unreachable') else round(fresh['price'])}")
-    print("Summary Bid Price rows:", "STALE -- update build_model.py BID_ROWS" if stale else "match the fresh solve (within $1,000).")
+                print(f"  STALE Summary row '{lab}': workbook {typed}, fresh {f.get('price')}")
+    if seen != len(rows):
+        stale += 1
+        print(f"  Summary has {seen} of {len(rows)} Bid Price rows")
+    print("Summary Bid Price rows:", "STALE -- run build_model.py (it reads bid_prices.json) and recalc" if stale
+          else "match the fresh solve (within $1,000).")
 
 
 if __name__ == "__main__":
-    out = run()
-    check_summary(out, PATH)
+    rows = run()
+    json.dump(dict(source=PATH, rows=rows), open("bid_prices.json", "w"), indent=1)
+    print("wrote bid_prices.json")
+    check_summary(rows, PATH)

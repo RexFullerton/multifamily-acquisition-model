@@ -100,10 +100,12 @@ r = section(ws, r, "PROPERTY TAX REASSESSMENT")
 A['millage'] = inp(ws, r, "Combined Millage Rate", 0.020171, "0.000000", "BCPA millage code 1512 (Pompano Beach), all 3 parcels. 2026 PROPOSED = 20.1710 mills (BCPA 2026 Proposed Millage Rate Table); 2025 FINAL = 20.2573. Using 2026 proposed as closest to the Year-1 (2027) levy; final 2026 rates are adopted at September budget hearings."); r += 1
 A['seller_taxable'] = inp(ws, r, "Seller's Current TAXABLE Value ($)", 10318700, USDC, "BCPA-CONFIRMED: 2025 certified taxable value, sum of the 3 folios ($2,166,930 + $2,063,740 + $6,088,030). Matches the LoopNet figure. For reference, BCPA 2026 working just value = $11,650,640 (vs. model's statutory-method reassessment of $11,730,000)."); r += 1
 A['cos_factor'] = inp(ws, r, "Cost-of-Sale Factor (DOR customary)", 0.85, PCT1, "Fla. Stat. 193.011(8): DOR sales-ratio studies customarily net sale price by 15% cost-of-sale allowance. Set to 100% to run the conservative (full-price) case instead."); r += 1
-A['nonhs_cap'] = inp(ws, r, "Non-Homestead Annual Assessment Cap", 0.10, PCT1, "Fla. Const. Art VII — 10% cap today; Amendment 3 (Nov 2026 ballot) would cut to 5% starting 2027 if passed — NOT modeled"); r += 1
+A['nonhs_cap'] = inp(ws, r, "Non-Homestead Assessment Cap (Fla. Stat. 193.1555) -- REFERENCE ONLY, not used in formulas", 0.10, PCT1, "Fla. Stat. 193.1555(3): for 'nonresidential' property, which under 193.1554(1) includes residential property of 10+ units, annual increases in ASSESSED value are capped at 10% for non-school levies (193.1555(2) excludes school district levies). Reset to just value the Jan 1 after a change of ownership (193.1555(5)). It is a ceiling, not a growth rate. Amendment 3 (Nov 2026 ballot, 5% cap) not modeled."); r += 1
+A['tax_growth_row'] = r
+A['tax_growth'] = frm(ws, r, "Property Tax Growth after Reassessment (= just-value growth = terminal market rent growth)", 0, PCT1, "After the sale resets assessed value to just value, assessed value tracks just value, so tax grows with market value, not at the 10% cap. Tied by formula to the model's terminal market rent growth (3.0%). The 10% cap is not binding at this rate. Prior model grew tax at 10%/yr, which was a misreading of the cap."); r += 1
 A['just_value_entry'] = frm(ws, r, "Reassessed Just Value at Purchase ($)", f"={A['price']}*{A['cos_factor']}", USDC, "i.e. Purchase Price x Cost-of-Sale Factor"); r += 1
 A['seller_tax'] = frm(ws, r, "Seller's Current Annual Tax ($)", f"={A['seller_taxable']}*{A['millage']}", USDC); r += 1
-A['buyer_tax_y1'] = frm(ws, r, "Buyer's Year-1 Tax ($)", f"={A['just_value_entry']}*{A['millage']}", USDC); r += 1
+A['buyer_tax_y1'] = frm(ws, r, "Buyer's Year-1 Tax ($)", f"={A['just_value_entry']}*{A['millage']}", USDC, "Simplification: taxed on the reassessed value from Year 1. Strictly, reassessment takes effect the Jan 1 AFTER the sale; BCPA's 2026 working just value ($11.65M) is already within 1% of the reassessed $11.73M, so the difference is small."); r += 1
 r += 1
 
 r = section(ws, r, "RENOVATION PROGRAM — bottom-up scope, per classic unit")
@@ -136,7 +138,8 @@ r = section(ws, r, "OPERATING ASSUMPTIONS")
 A['vacancy'] = inp(ws, r, "Physical Vacancy %", 0.065, PCT1, "vs. 92% disclosed occupancy; nudged for renovation downtime"); r += 1
 A['credit_loss'] = inp(ws, r, "Credit Loss % (of GPR)", 0.01, PCT1); r += 1
 A['concessions'] = inp(ws, r, "Concessions % (of GPR)", 0.005, PCT1); r += 1
-A['other_income_mo'] = inp(ws, r, "Other Income ($/unit/month)", 35, USDC, "RUBS, pet, parking, admin fees"); r += 1
+A['other_income_mo'] = inp(ws, r, "Other Income ex-Utility Recovery ($/unit/month)", 15, USDC, "JUDGMENT: laundry room, application/late fees, pet. Was $35 including RUBS; utility recovery is now its own line tied to the owner's actual water/sewer/trash cost (below)."); r += 1
+A['rubs_pct'] = inp(ws, r, "Utility Reimbursement (RUBS) Recovery % of Owner Water/Sewer/Trash Cost", 0.60, PCT1, "JUDGMENT, flagged. Share of the owner's water/sewer/trash bill recovered from tenants via RUBS, net of vacancy, lease clauses not yet in place, and caps. Fully implemented programs are often cited higher; 60% is deliberately below that because it is not known whether current leases carry a RUBS clause. DILIGENCE: lease form + rent roll."); r += 1
 A['burnoff_pct'] = inp(ws, r, "Loss-to-Lease Burn-off % per Turnover", 0.50, PCT1, "of remaining gap to market rent, closed at each turnover"); r += 1
 A['turnover_rate'] = inp(ws, r, "Annual Turnover Rate %", 0.55, PCT1, "general Class B/C garden-apartment convention, not property-specific"); r += 1
 A['reno_headstart'] = inp(ws, r, "Prior-Owner-Renovated Units: Starting Capture of Total Uplift", 0.65, PCT1, "judgment split of the disclosed 20.76% blended upside between already-renovated (partial capture) and classic (zero capture) units"); r += 1
@@ -157,6 +160,7 @@ for i, (v, n) in enumerate(zip(growth_vals, growth_notes), start=1):
     A['growth'].append(addr)
     r += 1
 r += 1
+ws.cell(row=A['tax_growth_row'], column=3, value=f"={A['growth'][-1]}")  # tax growth = terminal market rent growth
 
 r = section(ws, r, "EXPENSE GROWTH")
 A['exp_growth'] = inp(ws, r, "General Expense Growth % (ex-insurance, ex-tax)", 0.035, PCT1); r += 1
@@ -167,8 +171,8 @@ r = section(ws, r, "OPERATING EXPENSES (Year 1, $/unit/year unless noted)")
 A['payroll'] = inp(ws, r, "Payroll (on-site mgmt + maintenance)", 1400, USDC); r += 1
 A['repairs'] = inp(ws, r, "Repairs & Maintenance", 1100, USDC, "nudged up for 1958 vintage / undisclosed roof"); r += 1
 A['turnover_cost'] = inp(ws, r, "Turnover / Make-Ready", 350, USDC); r += 1
-A['contract_svc'] = inp(ws, r, "Contract Services (landscaping, pest, trash)", 450, USDC); r += 1
-A['utilities'] = inp(ws, r, "Utilities (owner-paid common area/vacant)", 500, USDC); r += 1
+A['contract_svc'] = inp(ws, r, "Contract Services (landscaping, pest; trash now its own line)", 280, USDC, "Was $450 including trash. Trash is now built from the city rate schedule (~$170/unit, below), so this line is reduced by the same amount; the total is unchanged. Judgment."); r += 1
+A['utilities'] = inp(ws, r, "Utilities — Common-Area Electric & Vacant Units", 500, USDC, "JUDGMENT. Units have individual mini-split AC, so unit electric is assumed tenant-paid. This line covers common-area lighting, gates, laundry room, and vacant-unit electric."); r += 1
 A['insurance_base'] = inp(ws, r, "Insurance — Base Case ($/unit)", 2400, USDC, "vintage-risk-adjusted above the general $2,000/unit South Florida average"); r += 1
 A['insurance_roof'] = inp(ws, r, "Insurance — If Roof Replaced ($/unit)", 1900, USDC, "scenario only — see Roof section below"); r += 1
 A['mgmt_fee_pct'] = inp(ws, r, "Management Fee (% of EGI)", 0.035, PCT1); r += 1
@@ -176,6 +180,29 @@ A['nav'] = inp(ws, r, "Non-Ad Valorem Assessments ($/unit, fire etc.)", 375, USD
 A['ga'] = inp(ws, r, "G&A / Admin", 250, USDC); r += 1
 A['marketing'] = inp(ws, r, "Marketing", 150, USDC); r += 1
 A['reserves'] = inp(ws, r, "Replacement Reserves (below NOI)", 300, USDC); r += 1
+r += 1
+
+r = section(ws, r, "WATER / SEWER / TRASH — OWNER-PAID (ASSUMED: listing silent -- DILIGENCE ITEM)")
+ws.cell(row=r, column=1, value=(
+    "The LoopNet/Crexi listings say nothing about who pays water, sewer or trash (the OM is gated). Per instruction, "
+    "modeled as OWNER-PAID with RUBS recovery. Rates: City of Pompano Beach Code 50.03 (water) and 51.05 (wastewater), "
+    "multifamily classification, charges effective 10/1/2026 (FY2027); solid waste: City of Pompano Beach Rate Schedule "
+    "2025-2026 (eff. 10/1/2025), multifamily containerized non-compacted, 2x/week (the city minimum for multifamily).")).font = NOTE
+r += 1
+A['w_unit'] = inp(ws, r, "Water Service Charge per Unit ($/unit/month, FY2027)", 7.10, USD2, "Code 50.03(D)(2)(b): each additional unit on the same meter"); r += 1
+A['w_kgal'] = inp(ws, r, "Water Commodity Charge ($/1,000 gal, 0-7,000 gal tier, FY2027)", 3.90, USD2, "Code 50.03(D)(2)(c), per-unit tier"); r += 1
+A['s_unit'] = inp(ws, r, "Sewer Service Charge per Unit ($/unit/month, FY2027)", 16.10, USD2, "Code 51.05(D)(2)(a)"); r += 1
+A['s_kgal'] = inp(ws, r, "Sewer Flow Charge ($/1,000 gal, FY2027)", 4.88, USD2, "Code 51.05(D)(2)(b)"); r += 1
+A['kgal'] = inp(ws, r, "Water Use per Unit (1,000 gal/month)", 3.0, "0.0", "JUDGMENT: small units (studios/1BR, ~1-2 occupants). Replace with actual water bills."); r += 1
+A['meters'] = inp(ws, r, "Number of Water Meters (judgment: one 2-inch per building)", 7, "0", "JUDGMENT: 7 buildings per listing; meter count/size unknown"); r += 1
+A['meter_chg'] = inp(ws, r, "Monthly Service Charge per 2-inch Meter ($, FY2027)", 40.64, USD2, "Code 50.03(D)(2)(a), multifamily, 2-inch"); r += 1
+A['ws_cost'] = frm(ws, r, "Water & Sewer Cost ($/unit/year)",
+                   f"=(({A['w_unit']}+{A['kgal']}*{A['w_kgal']})+({A['s_unit']}+{A['kgal']}*{A['s_kgal']}))*12+{A['meters']}*{A['meter_chg']}*12/{A['units']}",
+                   USDC, bold=True); r += 1
+A['ws_growth'] = inp(ws, r, "Water & Sewer Cost Growth %", 0.06, PCT1, "Adopted city schedule through FY2029: per-unit bill at 3,000 gal rises ~5.8-6.0%/yr (water commodity +9.5%/yr, sewer flow +7.5%/yr, sewer base flat)"); r += 1
+A['trash_n'] = inp(ws, r, "Trash Containers (6-yd, 2x/week; count is judgment)", 3, "0", "JUDGMENT: 97 units, 2x/week minimum pickup"); r += 1
+A['trash_rate'] = inp(ws, r, "City Rate per 6-yd Container, 2x/week ($/month)", 457.63, USD2, "Pompano Beach Solid Waste Rate Schedule 2025-2026, multifamily containerized (non-compacted)"); r += 1
+A['trash_cost'] = frm(ws, r, "Trash Cost ($/unit/year)", f"={A['trash_n']}*{A['trash_rate']}*12/{A['units']}", USDC, bold=True); r += 1
 r += 1
 
 r = section(ws, r, "ROOF & RECERTIFICATION — diligence items, not confident estimates")
@@ -186,15 +213,26 @@ A['recert_inspect'] = inp(ws, r, "Recertification Inspection Cost ($, one-time)"
 A['recert_remediation'] = inp(ws, r, "Recertification Remediation Contingency ($, one-time)", 150000, USDC, "placeholder — genuinely unknowable without an engineer's report"); r += 1
 r += 1
 
-r = section(ws, r, "DEBT — SCENARIO B: NEW ACQUISITION DEBT (generic)")
-A['sofr'] = inp(ws, r, "1-Month SOFR", 0.0385, PCT1, "sofrrate.com, reading as of 9/18/2026"); r += 1
-A['spread'] = inp(ws, r, "Spread (bps over SOFR)", 0.0325, PCT1); r += 1
-A['rate'] = frm(ws, r, "All-In Floating Rate", f"={A['sofr']}+{A['spread']}", PCT1, bold=True); r += 1
-A['ltv'] = inp(ws, r, "Maximum LTV %", 0.65, PCT1); r += 1
-A['min_dscr'] = inp(ws, r, "Minimum DSCR", 1.25, "0.00x"); r += 1
-A['min_debt_yield'] = inp(ws, r, "Minimum Debt Yield %", 0.08, PCT1); r += 1
-A['io_years'] = inp(ws, r, "Interest-Only Period (years)", 2, "0"); r += 1
+r = section(ws, r, "DEBT — AGENCY FIXED-RATE TERMS (Scenario B new debt AND the Scenario A refinance)")
+ws.cell(row=r, column=1, value=(
+    "Fannie Mae Small Mortgage Loan program (loans up to $9M; max LTV 80%; min DSCR 1.25x; 5-30 yr terms; up to "
+    "30-yr amortization; declining prepayment premium available) -- multifamily.fanniemae.com term sheet. Both the "
+    "new loan (~$8M) and the Year-4 refinance fall under the $9M cap. Replaces the prior 7.10% floating bridge-style "
+    "assumption, which had no rate-cap cost.")).font = NOTE
+r += 1
+A['ust10'] = inp(ws, r, "10-Year Treasury Yield", 0.0524, PCT, "FRED series DGS10, 9/28/2026 (latest print). Held flat; no forward curve."); r += 1
+A['agency_spread'] = inp(ws, r, "Agency Spread over 10-Year Treasury", 0.0200, PCT, "JUDGMENT within broker-sourced ranges: multifamily.loans cites agency spreads 'generally 200-250 bps'; its Aug-2026 Fannie/Freddie small-loan quotes (6.10-8.20% vs a 4.70% 10-yr) imply 140-350 bps; apartmentloanstore.com Fannie quotes on 9/29/2026 (6.28-6.87%) imply ~105-165 bps over today's 10-yr for larger/better assets. 200 bps reflects small balance, 1958 Class C, and a declining-prepay (not yield-maintenance) structure. Indicative, not a term sheet."); r += 1
+A['rate'] = frm(ws, r, "All-In Fixed Rate (10-yr fixed)", f"={A['ust10']}+{A['agency_spread']}", PCT, bold=True); r += 1
+A['ltv'] = inp(ws, r, "Maximum LTV %", 0.75, PCT1, "Program max 80%; 75% used for a 1958 Class C asset (judgment). Refinance LTV applies to value at refinance (NOI / exit cap)."); r += 1
+A['min_dscr'] = inp(ws, r, "Minimum DSCR (on amortizing debt service)", 1.25, "0.00x", "Fannie Small Loan minimum. Sized on the fully amortizing payment, as agencies do."); r += 1
+A['io_years'] = inp(ws, r, "Interest-Only Period (years)", 0, "0", "JUDGMENT: DSCR-constrained agency loans generally do not get interest-only; partial IO usually requires lower leverage."); r += 1
 A['amort_years'] = inp(ws, r, "Amortization (years)", 30, "0"); r += 1
+A['prepay'] = []
+for i, v in enumerate([0.05, 0.05, 0.04, 0.04, 0.03, 0.03, 0.02, 0.02, 0.01, 0.01], start=1):
+    note = ("Fannie Mae Declining Prepayment Premium, 10-year fixed structure 5-5-4-4-3-3-2-2-1-1, no lockout "
+            "(multifamily.fanniemae.com term sheet). Scenario B sale = loan year 5; refi loan sale = loan year (5 - maturity year).") if i == 1 else None
+    A['prepay'].append(inp(ws, r, f"Prepayment Premium, Loan Year {i}", v, PCT1, note)); r += 1
+A['prepay_range'] = f"{A['prepay'][0]}:{A['prepay'][-1].split('!')[1]}"
 r += 1
 
 r = section(ws, r, "DEBT — SCENARIO A: ASSUMABLE EXISTING DEBT (broker-disclosed, LoopNet/Crexi)")
@@ -208,13 +246,23 @@ A['assum_blended_rate'] = frm(ws, r, "Blended Rate (formula, weighted avg -- tie
                                 PCT1); r += 1
 A['assum_io'] = inp(ws, r, "Both Loans Interest-Only Through First's Maturity (1=yes)", 1, "0", "JUDGMENT -- amortization/IO status is NOT disclosed publicly for either loan. IO is a common structure for non-agency assumable loans marketed on a cash-flow basis, and is roughly consistent with the broker's \"almost 10% cash-on-cash Day 1\" claim. Flagged, not confirmed."); r += 1
 A['assum_fee_pct'] = inp(ws, r, "Loan Assumption Fee (% of assumed balance)", 0.005, PCT1, "JUDGMENT -- not disclosed. 0.5-1.0% is a commonly cited range for CMBS/balance-sheet loan assumption fees; used the low end. Also assumes ~30-60 days of lender consent/underwriting, not separately costed."); r += 1
+A['assum_max_ltv'] = inp(ws, r, "Assumption Approval: Max LTV on Purchase Price (paydown test)", 0.75, PCT1, "JUDGMENT: the lender's assumption test is not disclosed. If assumed balances exceed this % of the new purchase price, the buyer must pay the loan down at closing (applied to the 6.2% supplemental first). Binds below ~$12.6M. Year-1 DSCR (~2.3x) is not a constraint, so no DSCR test is modeled."); r += 1
 r += 1
 
 r = section(ws, r, "HOLD & EXIT")
 A['hold_years'] = frm(ws, r, "Hold Period (years) -- STRUCTURAL, not a live input", 5, "0", "The model is built for a 5-year hold (5 cash-flow columns, exit on Year-6 forward NOI). Changing this cell does NOT change the model -- shown black, not blue, for that reason."); r += 1
-A['exit_spread_base'] = inp(ws, r, "Exit Cap Spread over Entry — Base Case (bps)", 0.005, PCT1, "per instruction: entry + 50bps"); r += 1
-A['exit_spread_sens'] = inp(ws, r, "Exit Cap Spread over Entry — Sensitivity Ceiling (bps)", 0.010, PCT1, "per instruction: sensitivity extends to +100bps"); r += 1
+A['exit_anchor'] = inp(ws, r, "Exit Cap — Market Anchor (Fort Lauderdale multifamily average)", 0.056, PCT, "Matthews, Fort Lauderdale Multifamily Market Report Q3 2025 (pub. 11/20/2025): average cap rate 5.6%, $283K/unit. Cross-check: Colliers South Florida Multifamily Q1 2026 (4/24/2026): cap rates 'near 5.0%' (all classes, tri-county). Used the higher, Broward-specific figure. NOT this deal's own cap rate."); r += 1
+A['exit_vintage'] = inp(ws, r, "Exit Cap — Spread for Class C / 1958 Vintage at Exit", 0.010, PCT, "JUDGMENT. Market averages are dominated by newer stock; at exit this will be a ~73-year-old Class C building. CBRE's H1 2026 Cap Rate Survey (8/12/2026) reports expectations for cap-rate expansion are strongest for Class C, but its market-level tables are gated, so no sourced Class C spread is available. Named comps checked: Cascades at the Hammocks (Miami-Dade, 264 units, 1988, $65.5M / $248,106/unit, May 2026, Freddie loans assumed) and Savona Grand (Palm Beach County, 214 units, bought by American Landmark July 2026) -- neither has a publicly reported price-and-NOI pair, so no implied cap is available."); r += 1
+A['exit_cap'] = frm(ws, r, "EXIT CAP RATE (base case) = market anchor + vintage spread", f"={A['exit_anchor']}+{A['exit_vintage']}", PCT, "Direct input, not tied to entry. Sensitivity tables run it +/-100 bps. Also used as the lender's cap rate for the refinance appraisal.", bold=True); r += 1
 A['cost_of_sale_exit'] = inp(ws, r, "Cost of Sale at Exit (%)", 0.02, PCT1); r += 1
+r += 1
+
+r = section(ws, r, "SENSITIVITY AXES (step sizes; each grid runs the base case +/- 2 steps)")
+A['sens_exit_step'] = inp(ws, r, "Sensitivity Step — Exit Cap (per step)", 0.005, PCT, "2 steps = +/-100 bps"); r += 1
+A['sens_price_step'] = inp(ws, r, "Sensitivity Step — Purchase Price (% per step)", 0.05, PCT1); r += 1
+A['sens_growth_step'] = inp(ws, r, "Sensitivity Step — Market Rent Growth (added to every year, per step)", 0.005, PCT); r += 1
+A['sens_cost_step'] = inp(ws, r, "Sensitivity Step — Renovation Cost (% per step)", 0.10, PCT1); r += 1
+A['sens_prem_step'] = inp(ws, r, "Sensitivity Step — Renovation Premium ($/month per step; grid runs base + 0..4 steps)", 50, USDC); r += 1
 r += 1
 
 r = section(ws, r, "WATERFALL")
@@ -359,11 +407,13 @@ for idx, row_i in enumerate(UM['rows']):
     for i, col in enumerate(YEAR_COLS):
         cl = get_column_letter(col)
         if i == 0:
+            # Year 1: renovation program under way -- blend of in-place and renovated rent
             f = (f"='Unit Mix'!$F${row_i}*(1-{A['reno_y1_capture']})"
                  f"+({cl}{market_row}+{A['reno_premium_mo']})*{A['reno_y1_capture']}")
         else:
-            prev = get_column_letter(col - 1)
-            f = f"={prev}{classic_row}*(1+{cl}${grow_row})"
+            # Year 2+: renovated -> market rent (+ premium, $0 in base). Prior model compounded the
+            # Year-1 blend forward, so these units never reached market (bug fixed 2026-09-29).
+            f = f"={cl}{market_row}+{A['reno_premium_mo']}"
         op.cell(row=r, column=col, value=f).number_format = USDC
     r += 1
 
@@ -427,20 +477,23 @@ for col in YEAR_COLS:
     op.cell(row=r, column=col, value=f"=-{cl}{gpr_row}*{A['concessions']}").number_format = USDC
 r += 1
 oi_row = r
-op.cell(row=r, column=1, value="Plus: Other Income")
+op.cell(row=r, column=1, value="Plus: Other Income (laundry, fees, pet; ex-utility recovery)")
 for col in YEAR_COLS:
     cl = get_column_letter(col)
     op.cell(row=r, column=col, value=f"={A['units']}*{A['other_income_mo']}*12*(1+{A['exp_growth']})^({cl}${yr_row}-1)").number_format = USDC
 r += 1
+rubs_row = r
+op.cell(row=r, column=1, value="Plus: Utility Reimbursement (RUBS, % of owner water/sewer/trash)")
+r += 1  # formulas filled in after the water/sewer and trash expense rows exist
 egi_row = r
 op.cell(row=r, column=1, value="Effective Gross Income (EGI)").font = BOLD
 for col in YEAR_COLS:
     cl = get_column_letter(col)
-    op.cell(row=r, column=col, value=f"=SUM({cl}{gpr_row}:{cl}{oi_row})").number_format = USDC
+    op.cell(row=r, column=col, value=f"=SUM({cl}{gpr_row}:{cl}{rubs_row})").number_format = USDC
     op.cell(row=r, column=col).font = BOLD
 r += 1
 OP.update(gpr_row=gpr_row, egi_row=egi_row, market_gpr_row=market_gpr_row, ltl_row=ltl_row,
-          vac_row=vac_row, cl_row=cl_row, con_row=con_row, oi_row=oi_row)
+          vac_row=vac_row, cl_row=cl_row, con_row=con_row, oi_row=oi_row, rubs_row=rubs_row)
 r += 1
 
 r = section(op, r, "OPERATING EXPENSES", span=1 + NYEARS)
@@ -456,7 +509,12 @@ payroll_row = opex_line("Payroll", A['payroll'], A['exp_growth'], r); r += 1
 repairs_row = opex_line("Repairs & Maintenance", A['repairs'], A['exp_growth'], r); r += 1
 turnover_row = opex_line("Turnover / Make-Ready", A['turnover_cost'], A['exp_growth'], r); r += 1
 contract_row = opex_line("Contract Services", A['contract_svc'], A['exp_growth'], r); r += 1
-util_row = opex_line("Utilities (owner-paid)", A['utilities'], A['exp_growth'], r); r += 1
+util_row = opex_line("Utilities — common-area electric & vacant units", A['utilities'], A['exp_growth'], r); r += 1
+ws_row = opex_line("Water & Sewer (owner-paid, city tariff)", A['ws_cost'], A['ws_growth'], r); r += 1
+trash_row = opex_line("Trash (owner-paid, city rate)", A['trash_cost'], A['exp_growth'], r); r += 1
+for col in YEAR_COLS:
+    cl = get_column_letter(col)
+    op.cell(row=rubs_row, column=col, value=f"=-{A['rubs_pct']}*({cl}{ws_row}+{cl}{trash_row})").number_format = USDC
 
 ins_row = r
 op.cell(row=r, column=1, value="Insurance")
@@ -468,14 +526,14 @@ for col in YEAR_COLS:
 r += 1
 
 tax_row = r
-op.cell(row=r, column=1, value="Property Tax (reassessed basis, capped growth)")
+op.cell(row=r, column=1, value="Property Tax (reassessed at purchase; grows with just value)")
 for i, col in enumerate(YEAR_COLS):
     cl = get_column_letter(col)
     if i == 0:
         f = f"=-{A['buyer_tax_y1']}"
     else:
         prev = get_column_letter(col - 1)
-        f = f"={prev}{tax_row}*(1+{A['nonhs_cap']})"
+        f = f"={prev}{tax_row}*(1+{A['tax_growth']})"
     op.cell(row=r, column=col, value=f).number_format = USDC
 r += 1
 nav_row = opex_line("Non-Ad Valorem Assessments (fire etc., per unit)", A['nav'], A['exp_growth'], r); r += 1
@@ -537,7 +595,8 @@ for col in YEAR_COLS:
 r += 2
 
 OP.update(nav_row=nav_row, payroll_row=payroll_row, repairs_row=repairs_row, turnover_row=turnover_row,
-          contract_row=contract_row, util_row=util_row, ins_row=ins_row, tax_row=tax_row,
+          contract_row=contract_row, util_row=util_row, ws_row=ws_row, trash_row=trash_row,
+          ins_row=ins_row, tax_row=tax_row,
           mgmt_row=mgmt_row, ga_row=ga_row, mktg_row=mktg_row, opex_total_row=opex_total_row,
           noi_row=noi_row, noi_pretax_row=noi_pretax_row, reserves_row=reserves_row,
           capex_row=capex_row, ucf_row=ucf_row, yr_row=yr_row)
@@ -553,7 +612,7 @@ noi_y1 = f"{OPS}${get_column_letter(YEAR_COLS[0])}${OP['noi_row']}"
 db = sheet("Debt")
 colwidths(db, [34, 13, 13, 13, 13, 13])
 r = 1
-r = title(db, r, "DEBT — SCENARIO B (ALTERNATIVE): new acquisition debt, sized on the binding constraint (no circularity)")
+r = title(db, r, "DEBT — SCENARIO B (ALTERNATIVE): new agency fixed-rate loan, sized on the binding constraint (no circularity)")
 r += 1
 
 r = section(db, r, "SIZING", span=3)
@@ -561,38 +620,37 @@ db.cell(row=r, column=1, value="Year 1 NOI (from Operating Model)")
 db.cell(row=r, column=3, value=f"={noi_y1}").number_format = USDC
 noi_y1_ref = f"'Debt'!$C${r}"
 r += 1
+const_row = r
+db.cell(row=r, column=1, value="Annual Mortgage Constant (fixed rate, full amortization)")
+db.cell(row=r, column=3, value=f"=-PMT({A['rate']},{A['amort_years']},1)").number_format = "0.0000%"
+const_addr = f"'Debt'!$C${const_row}"
+r += 1
 loan_ltv_row = r
 db.cell(row=r, column=1, value="Loan Amount — LTV Constraint")
 db.cell(row=r, column=3, value=f"={A['price']}*{A['ltv']}").number_format = USDC
 r += 1
-loan_dy_row = r
-db.cell(row=r, column=1, value="Loan Amount — Debt Yield Constraint")
-db.cell(row=r, column=3, value=f"={noi_y1_ref}/{A['min_debt_yield']}").number_format = USDC
-r += 1
 loan_dscr_row = r
-db.cell(row=r, column=1, value="Loan Amount — DSCR Constraint (IO-period debt service)")
-db.cell(row=r, column=3, value=f"={noi_y1_ref}/({A['min_dscr']}*{A['rate']})").number_format = USDC
+db.cell(row=r, column=1, value="Loan Amount — DSCR Constraint (amortizing debt service)")
+db.cell(row=r, column=3, value=f"={noi_y1_ref}/({A['min_dscr']}*{const_addr})").number_format = USDC
 r += 1
 loan_row = r
 db.cell(row=r, column=1, value="SIZED LOAN AMOUNT (binding = minimum)").font = BOLD
-db.cell(row=r, column=3, value=f"=MIN(C{loan_ltv_row},C{loan_dy_row},C{loan_dscr_row})").number_format = USDC
+db.cell(row=r, column=3, value=f"=MIN(C{loan_ltv_row},C{loan_dscr_row})").number_format = USDC
 db.cell(row=r, column=3).font = BOLD
 loan_addr = f"'Debt'!$C${loan_row}"
 r += 1
 bind_row = r
 db.cell(row=r, column=1, value="Binding Constraint")
-db.cell(row=r, column=3,
-        value=(f'=IF(C{loan_row}=C{loan_ltv_row},"LTV",'
-               f'IF(C{loan_row}=C{loan_dy_row},"Debt Yield","DSCR"))'))
+db.cell(row=r, column=3, value=f'=IF(C{loan_row}=C{loan_ltv_row},"LTV","DSCR")')
 r += 1
 db.cell(row=r, column=1, value="Resulting LTV")
 db.cell(row=r, column=3, value=f"={loan_addr}/{A['price']}").number_format = PCT1
 r += 1
-db.cell(row=r, column=1, value="Resulting Debt Yield")
+db.cell(row=r, column=1, value="Resulting Debt Yield (memo; agencies do not size on it)")
 db.cell(row=r, column=3, value=f"={noi_y1_ref}/{loan_addr}").number_format = PCT1
 r += 1
-db.cell(row=r, column=1, value="Resulting DSCR (Year 1, IO)")
-db.cell(row=r, column=3, value=f"={noi_y1_ref}/({loan_addr}*{A['rate']})").number_format = "0.00\"x\""
+dscr1_row = r
+db.cell(row=r, column=1, value="Resulting DSCR (Year 1)")
 r += 2
 
 r = section(db, r, "AMORTIZATION SCHEDULE (Years 1-5, matching the hold period)", span=6)
@@ -619,9 +677,17 @@ for y in range(1, 6):
     db.cell(row=r, column=6, value=f"=B{r}-D{r}").number_format = USDC
     r += 1
 amort_end = r - 1
+db.cell(row=dscr1_row, column=3, value=f"={noi_y1_ref}/E{amort_start}").number_format = "0.00\"x\""
+r += 1
+prepay_b_row = r
+db.cell(row=r, column=1, value="Prepayment Premium % at Sale (loan year = hold period)")
+db.cell(row=r, column=3, value=f"=INDEX({A['prepay_range']},{A['hold_years']})").number_format = PCT1
+prepay_b_addr = f"'Debt'!$C${r}"
+r += 1
 DEBT = dict(loan_addr=loan_addr, amort_start=amort_start, amort_end=amort_end,
-            bind_row=bind_row, loan_ltv_row=loan_ltv_row, loan_dy_row=loan_dy_row,
-            loan_dscr_row=loan_dscr_row, loan_row=loan_row, noi_y1_ref=noi_y1_ref)
+            bind_row=bind_row, loan_ltv_row=loan_ltv_row,
+            loan_dscr_row=loan_dscr_row, loan_row=loan_row, noi_y1_ref=noi_y1_ref,
+            const_addr=const_addr, prepay_b_addr=prepay_b_addr)
 
 print("Debt built through row", r, "| loan:", loan_addr)
 wb.save("model_wip.xlsx")
@@ -731,8 +797,9 @@ rt.cell(row=r, column=1, value="Less: Concessions")
 rt.cell(row=r, column=2, value=f"=-{day0_gpr_addr}*{A['concessions']}").number_format = USDC
 r += 1
 day0_oi_row = r
-rt.cell(row=r, column=1, value="Plus: Other Income")
-rt.cell(row=r, column=2, value=f"={A['units']}*{A['other_income_mo']}*12").number_format = USDC
+rt.cell(row=r, column=1, value="Plus: Other Income + Utility Reimbursement (Year-1 levels)")
+day0_oi_expr = f"({OPS}$B${OP['oi_row']}+{OPS}$B${OP['rubs_row']})"
+rt.cell(row=r, column=2, value=f"={day0_oi_expr}").number_format = USDC
 r += 1
 day0_egi_row = r
 rt.cell(row=r, column=1, value="Day-0 Effective Gross Income").font = BOLD
@@ -744,7 +811,7 @@ day0_fixedopex_row = r
 rt.cell(row=r, column=1, value="Fixed Opex Lines (payroll..marketing, ex-mgmt-fee -- identical to Year 1, no growth applied in Year 1)")
 fixed_opex_terms = "+".join([f"{OPS}$B${OP[k]}" for k in
                               ["payroll_row", "repairs_row", "turnover_row", "contract_row",
-                               "util_row", "ins_row", "tax_row", "nav_row", "ga_row", "mktg_row"]])
+                               "util_row", "ws_row", "trash_row", "ins_row", "tax_row", "nav_row", "ga_row", "mktg_row"]])
 rt.cell(row=r, column=2, value=f"={fixed_opex_terms}").number_format = USDC
 r += 1
 day0_mgmt_row = r
@@ -781,7 +848,7 @@ r += 1
 s2_egi_row = r
 rt.cell(row=r, column=1, value="  S2 EGI (same vacancy/credit-loss/concessions/%/other-income rates as Day-0)")
 rt.cell(row=r, column=2,
-        value=f"={s2_gpr_addr}*(1-{A['vacancy']}-{A['credit_loss']}-{A['concessions']})+{A['units']}*{A['other_income_mo']}*12").number_format = USDC
+        value=f"={s2_gpr_addr}*(1-{A['vacancy']}-{A['credit_loss']}-{A['concessions']})+{day0_oi_expr}").number_format = USDC
 s2_egi_addr = f"'Returns'!$B${s2_egi_row}"
 r += 1
 s2_noi_row = r
@@ -825,20 +892,14 @@ rt.cell(row=r, column=2, value=f"={noi_y1}/{A['price']}").number_format = PCT1
 r += 2
 
 r = section(rt, r, "EXIT VALUATION — tax-adjusted", span=2)
-entry_cap_row = r
-rt.cell(row=r, column=1, value="Entry Cap Rate ANCHOR for exit-spread convention = #2 above: In-Place, Day-0, reassessed tax (primary/cost-of-sale method)")
-rt.cell(row=r, column=2, value=f"={cap_inplace_addr}").font = BOLD
-rt.cell(row=r, column=2).number_format = PCT1
-entry_cap_addr = f"'Returns'!$B${entry_cap_row}"
-r += 1
 exit_cap_base_row = r
-rt.cell(row=r, column=1, value="Exit Cap Rate — base case (in-place entry + 50bps)")
-rt.cell(row=r, column=2, value=f"={entry_cap_addr}+{A['exit_spread_base']}").number_format = PCT1
+rt.cell(row=r, column=1, value="Exit Cap Rate — base case (direct market input on Assumptions; NOT tied to this deal's entry cap)").font = BOLD
+rt.cell(row=r, column=2, value=f"={A['exit_cap']}").font = BOLD
+rt.cell(row=r, column=2).number_format = PCT
 exit_cap_base_addr = f"'Returns'!$B${exit_cap_base_row}"
 r += 1
-exit_cap_sens_row = r
-rt.cell(row=r, column=1, value="Exit Cap Rate — sensitivity ceiling (in-place entry + 100bps)")
-rt.cell(row=r, column=2, value=f"={entry_cap_addr}+{A['exit_spread_sens']}").number_format = PCT1
+rt.cell(row=r, column=1, value="  memo: exit cap minus in-place (Day-0) entry cap")
+rt.cell(row=r, column=2, value=f"={exit_cap_base_addr}-{cap_inplace_addr}").number_format = PCT
 r += 1
 eff_tax_exit_row = r
 rt.cell(row=r, column=1, value="Effective Tax Rate at Exit (same cost-of-sale factor as entry)")
@@ -867,9 +928,13 @@ rt.cell(row=r, column=1, value="Less: Loan Payoff (Scenario B Debt tab, End Bala
 rt.cell(row=r, column=2, value=f"=-'Debt'!$F${DEBT['amort_end']}").number_format = USDC
 payoff_addr = f"'Returns'!$B${payoff_row}"
 r += 1
+prepay_b_row = r
+rt.cell(row=r, column=1, value="Less: Prepayment Premium (Scenario B, declining schedule, loan year 5)")
+rt.cell(row=r, column=2, value=f"={payoff_addr}*{DEBT['prepay_b_addr']}").number_format = USDC
+r += 1
 net_proceeds_row = r
 rt.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY — SCENARIO B").font = BOLD
-rt.cell(row=r, column=2, value=f"={exit_price_addr}+{cos_exit_addr}+{payoff_addr}").font = BOLD
+rt.cell(row=r, column=2, value=f"={exit_price_addr}+{cos_exit_addr}+{payoff_addr}+B{prepay_b_row}").font = BOLD
 rt.cell(row=r, column=2).number_format = USDC
 net_proceeds_addr = f"'Returns'!$B${net_proceeds_row}"
 r += 1
@@ -986,8 +1051,7 @@ for i, col in enumerate(RCOLS, start=1):
     rt.cell(row=r, column=col, value=f"={cl}{lev_before_exit_row}/B{inv_row}").number_format = PCT1
 r += 2
 
-RET = dict(entry_cap_addr=entry_cap_addr, exit_cap_base_addr=exit_cap_base_addr,
-           exit_cap_sens_row=exit_cap_sens_row, exit_price_addr=exit_price_addr,
+RET = dict(exit_cap_base_addr=exit_cap_base_addr, exit_price_addr=exit_price_addr,
            net_proceeds_addr=net_proceeds_addr, net_proceeds_unlev_addr=net_proceeds_unlev_addr,
            unlev_cf_total_row=unlev_cf_total_row, lev_before_exit_row=lev_before_exit_row,
            lev_cf_total_row=lev_cf_total_row, lev_exit_row=lev_exit_row,
@@ -1015,8 +1079,38 @@ da.cell(row=r, column=1, value=(
     "First mortgage and supplemental loan sourced from LoopNet/Crexi (see Assumptions). Amortization/IO "
     "status is NOT disclosed for either -- Assumptions!assum_io is a labeled judgment toggle. If the first "
     "mortgage's maturity (Assumptions!assum_first_maturity_yr) falls inside the 5-year hold, the combined "
-    "balance is refinanced at that point into new debt sized on Scenario B's generic terms (LTV/DSCR/Debt "
-    "Yield, whichever binds).")).font = NOTE
+    "balance is refinanced at that point into an agency fixed-rate loan on the same terms as Scenario B "
+    "(LTV on value at refinance, or DSCR on amortizing debt service, whichever binds). At closing, the lender's "
+    "assumption test can force a principal paydown (Assumptions: max LTV on purchase price).")).font = NOTE
+r += 2
+
+r = section(da, r, "ASSUMPTION APPROVAL — LENDER PAYDOWN TEST AT CLOSING", span=2)
+max_assum_row = r
+da.cell(row=r, column=1, value="Max Assumable Balance = Purchase Price x Max LTV")
+da.cell(row=r, column=2, value=f"={A['price']}*{A['assum_max_ltv']}").number_format = USDC
+r += 1
+assume_pd_row = r
+da.cell(row=r, column=1, value="Required Paydown at Closing = MAX(0, First + Supplemental - Max)").font = BOLD
+da.cell(row=r, column=2, value=f"=MAX(0,{A['assum_first_bal']}+{A['assum_supp_bal']}-B{max_assum_row})").font = BOLD
+da.cell(row=r, column=2).number_format = USDC
+assume_pd_addr = f"'Debt (Assumed)'!$B${r}"
+r += 1
+pd_supp_row = r
+da.cell(row=r, column=1, value="  applied to Supplemental (6.2%) first")
+da.cell(row=r, column=2, value=f"=MIN({assume_pd_addr},{A['assum_supp_bal']})").number_format = USDC
+r += 1
+pd_first_row = r
+da.cell(row=r, column=1, value="  remainder applied to First Mortgage")
+da.cell(row=r, column=2, value=f"={assume_pd_addr}-B{pd_supp_row}").number_format = USDC
+r += 1
+first0_row = r
+da.cell(row=r, column=1, value="First Mortgage Balance Assumed")
+da.cell(row=r, column=2, value=f"={A['assum_first_bal']}-B{pd_first_row}").number_format = USDC
+first0 = f"'Debt (Assumed)'!$B${r}"
+r += 1
+da.cell(row=r, column=1, value="Supplemental Balance Assumed")
+da.cell(row=r, column=2, value=f"={A['assum_supp_bal']}-B{pd_supp_row}").number_format = USDC
+supp0 = f"'Debt (Assumed)'!$B${r}"
 r += 2
 
 hdr = r
@@ -1034,7 +1128,7 @@ da.cell(row=r, column=1, value="Beginning Balance")
 for i, col in enumerate(DACOLS):
     cl = get_column_letter(col)
     if i == 0:
-        f = f"={A['assum_first_bal']}"
+        f = f"={first0}"
     else:
         prev = get_column_letter(col - 1)
         f = f"=IF({OPS}${cl}${yr_row}<={mat},{prev}{f_beg_row}-{prev}{r+1},0)"  # placeholder, fixed below
@@ -1050,7 +1144,7 @@ f_prin_row = r
 da.cell(row=r, column=1, value="Principal (0 if IO)")
 for col in DACOLS:
     cl = get_column_letter(col)
-    pmt_amort = f"(-PMT({A['assum_first_rate']},{A['amort_years']},{A['assum_first_bal']})-{cl}{f_int_row})"
+    pmt_amort = f"(-PMT({A['assum_first_rate']},{A['amort_years']},{first0})-{cl}{f_int_row})"
     da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({io_flag}=1,0,{pmt_amort}),0)").number_format = USDC
 r += 1
 f_end_row = r
@@ -1066,7 +1160,7 @@ for i, col in enumerate(DACOLS):
     cl = get_column_letter(col)
     prev = get_column_letter(col - 1)
     da.cell(row=f_beg_row, column=col,
-            value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({OPS}${prev}${yr_row}<={mat},{prev}{f_end_row},{A['assum_first_bal']}),0)")
+            value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({OPS}${prev}${yr_row}<={mat},{prev}{f_end_row},{first0}),0)")
 
 r = section(da, r, "SUPPLEMENTAL LOAN (pre-maturity)", span=1 + HOLD)
 s_beg_row = r
@@ -1074,7 +1168,7 @@ da.cell(row=r, column=1, value="Beginning Balance")
 for i, col in enumerate(DACOLS):
     cl = get_column_letter(col)
     if i == 0:
-        f = f"={A['assum_supp_bal']}"
+        f = f"={supp0}"
         da.cell(row=r, column=col, value=f).number_format = USDC
 r += 1
 s_int_row = r
@@ -1087,7 +1181,7 @@ s_prin_row = r
 da.cell(row=r, column=1, value="Principal (0 if IO)")
 for col in DACOLS:
     cl = get_column_letter(col)
-    pmt_amort = f"(-PMT({A['assum_supp_rate']},{A['amort_years']},{A['assum_supp_bal']})-{cl}{s_int_row})"
+    pmt_amort = f"(-PMT({A['assum_supp_rate']},{A['amort_years']},{supp0})-{cl}{s_int_row})"
     da.cell(row=r, column=col, value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({io_flag}=1,0,{pmt_amort}),0)").number_format = USDC
 r += 1
 s_end_row = r
@@ -1102,7 +1196,7 @@ for i, col in enumerate(DACOLS):
     cl = get_column_letter(col)
     prev = get_column_letter(col - 1)
     da.cell(row=s_beg_row, column=col,
-            value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({OPS}${prev}${yr_row}<={mat},{prev}{s_end_row},{A['assum_supp_bal']}),0)")
+            value=f"=IF({OPS}${cl}${yr_row}<={mat},IF({OPS}${prev}${yr_row}<={mat},{prev}{s_end_row},{supp0}),0)")
     da.cell(row=s_beg_row, column=col).number_format = USDC
 
 r = section(da, r, "REFINANCE AT MATURITY (fires the year after Assumptions!assum_first_maturity_yr)", span=1 + HOLD)
@@ -1123,13 +1217,9 @@ refi_ltv_row = r
 da.cell(row=r, column=1, value="New Loan — LTV constraint (on value at refinance, not purchase price)")
 da.cell(row=r, column=2, value=f"=B{refi_value_row}*{A['ltv']}").number_format = USDC
 r += 1
-refi_dy_row = r
-da.cell(row=r, column=1, value="New Loan — Debt Yield constraint")
-da.cell(row=r, column=2, value=f"={refi_noi_addr}/{A['min_debt_yield']}").number_format = USDC
-r += 1
 refi_dscr_row = r
-da.cell(row=r, column=1, value="New Loan — DSCR constraint (IO-equivalent)")
-da.cell(row=r, column=2, value=f"={refi_noi_addr}/({A['min_dscr']}*{A['rate']})").number_format = USDC
+da.cell(row=r, column=1, value="New Loan — DSCR constraint (amortizing debt service, agency fixed rate)")
+da.cell(row=r, column=2, value=f"={refi_noi_addr}/({A['min_dscr']}*{DEBT['const_addr']})").number_format = USDC
 r += 1
 refi_loan_row = r
 da.cell(row=r, column=1, value="NEW REFI LOAN AMOUNT (binding = minimum)").font = BOLD
@@ -1145,7 +1235,7 @@ r += 2
 
 r = section(da, r, "POST-REFINANCE LOAN", span=1 + HOLD)
 pmt_refi_row = r
-da.cell(row=r, column=1, value="Annual P&I Payment (post-refi IO period)")
+da.cell(row=r, column=1, value="Annual P&I Payment (post-refi, after any IO period)")
 da.cell(row=r, column=2, value=f"=-PMT({A['rate']},{A['amort_years']},{refi_loan_addr})").number_format = USDC
 pmt_refi_addr = f"'Debt (Assumed)'!$B${r}"
 r += 1
@@ -1207,10 +1297,17 @@ for col in DACOLS:
     da.cell(row=r, column=col).number_format = USDC
 r += 2
 
+prepay_a_row = r
+da.cell(row=r, column=1, value="Refi Loan Prepayment Premium % at Sale (loan year = hold - maturity year; 0 if no refi in hold)")
+da.cell(row=r, column=2, value=f"=IF({A['hold_years']}>{mat},INDEX({A['prepay_range']},{A['hold_years']}-{mat}),0)").number_format = PCT1
+prepay_a_addr = f"'Debt (Assumed)'!$B${r}"
+r += 2
+
 DA = dict(f_beg_row=f_beg_row, f_end_row=f_end_row, s_beg_row=s_beg_row, s_end_row=s_end_row,
           combined_payoff_row=combined_payoff_row, refi_loan_addr=refi_loan_addr,
           refi_paydown_addr=refi_paydown_addr, tot_ds_row=tot_ds_row, tot_end_row=tot_end_row,
-          DACOLS=DACOLS)
+          DACOLS=DACOLS, assume_pd_addr=assume_pd_addr, first0=first0, supp0=supp0,
+          prepay_a_addr=prepay_a_addr, rf_end_row=rf_end_row)
 print("Debt (Assumed) built through row", r)
 wb.save("model_wip.xlsx")
 
@@ -1229,8 +1326,8 @@ r += 2
 
 r = section(ra, r, "SOURCES & USES — SCENARIO A", span=2)
 a_fee_row = r
-ra.cell(row=r, column=1, value="Loan Assumption Fee")
-ra.cell(row=r, column=2, value=f"=({A['assum_first_bal']}+{A['assum_supp_bal']})*{A['assum_fee_pct']}").number_format = USDC
+ra.cell(row=r, column=1, value="Loan Assumption Fee (on balance assumed after any required paydown)")
+ra.cell(row=r, column=2, value=f"=({DA['first0']}+{DA['supp0']})*{A['assum_fee_pct']}").number_format = USDC
 a_fee_addr = f"'Returns (Assumed)'!$B${a_fee_row}"
 r += 1
 a_uses_row = r
@@ -1239,8 +1336,8 @@ ra.cell(row=r, column=2, value=f"={CAP['uses_total_addr']}+{a_fee_addr}").number
 a_uses_addr = f"'Returns (Assumed)'!$B${a_uses_row}"
 r += 1
 a_loan_row = r
-ra.cell(row=r, column=1, value="Assumed Debt (First + Supplemental, Year-0 balance)")
-ra.cell(row=r, column=2, value=f"={A['assum_first_bal']}+{A['assum_supp_bal']}").number_format = USDC
+ra.cell(row=r, column=1, value="Assumed Debt (First + Supplemental, after any lender-required paydown)")
+ra.cell(row=r, column=2, value=f"={DA['first0']}+{DA['supp0']}").number_format = USDC
 a_loan_addr = f"'Returns (Assumed)'!$B${a_loan_row}"
 r += 1
 a_equity_row = r
@@ -1261,6 +1358,9 @@ a_gp_eq_addr = f"'Returns (Assumed)'!$B${a_gp_eq_row}"
 r += 1
 ra.cell(row=r, column=1, value="  memo: vs. Scenario B equity")
 ra.cell(row=r, column=2, value=f"={CAP['equity_addr']}").number_format = USDC
+r += 1
+ra.cell(row=r, column=1, value="  memo: required paydown at assumption (included in Sponsor Equity above)")
+ra.cell(row=r, column=2, value=f"={DA['assume_pd_addr']}").number_format = USDC
 r += 2
 
 r = section(ra, r, "EXIT (same NOI/exit-cap mechanics as Scenario B -- only the loan payoff differs)", span=2)
@@ -1276,9 +1376,13 @@ a_payoff_row = r
 ra.cell(row=r, column=1, value="Less: Loan Payoff (Debt (Assumed), Year-5 Total Ending Balance)")
 ra.cell(row=r, column=2, value=f"=-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}${DA['tot_end_row']}").number_format = USDC
 r += 1
+a_prepay_row = r
+ra.cell(row=r, column=1, value="Less: Prepayment Premium on refinance loan (declining schedule)")
+ra.cell(row=r, column=2, value=f"=-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}${DA['rf_end_row']}*{DA['prepay_a_addr']}").number_format = USDC
+r += 1
 a_netproceeds_row = r
 ra.cell(row=r, column=1, value="NET SALE PROCEEDS TO EQUITY — SCENARIO A").font = BOLD
-ra.cell(row=r, column=2, value=f"=B{a_exitprice_row}+B{a_cos_row}+B{a_payoff_row}").font = BOLD
+ra.cell(row=r, column=2, value=f"=B{a_exitprice_row}+B{a_cos_row}+B{a_payoff_row}+B{a_prepay_row}").font = BOLD
 ra.cell(row=r, column=2).number_format = USDC
 a_netproceeds_addr = f"'Returns (Assumed)'!$B${r}"
 r += 2
@@ -1568,219 +1672,208 @@ wb.save("model_wip.xlsx")
 
 # =====================================================================
 # =====================================================================
-# 8. SENSITIVITY — explicit formulas (openpyxl can't make native Excel
-#    Data Tables). Each grid cell's IRR/EM references a dedicated helper
-#    row (below, in a clearly marked "calculation detail" area) holding
-#    a real 6-point cash flow (Year0..Year5) so IRR() gets a plain
-#    contiguous range -- no array-literal functions (HSTACK is not
-#    supported by all spreadsheet engines, confirmed via LibreOffice
-#    testing, so it is deliberately avoided here for portability).
-#    Each scenario is a compact, self-contained proxy: Year-1 NOI starts
-#    from the Operating Model's base case and is adjusted only for what
-#    that table's two axes actually change (tax, debt sizing, renovation
-#    NOI/capex, or a flat rent-growth override) -- it does not re-run
-#    the full unit-by-unit burn-off engine 25 times per table. Debt is
-#    re-sized where price or capex changes; held at the base-case loan
-#    where it doesn't. For full-fidelity what-if testing, edit
-#    Assumptions directly and read Returns/Waterfall.
+# 8. SENSITIVITY — live formulas. Each grid cell reads the IRR/EM of its own 4-row calculation
+#    block at the bottom of the tab (NOI by year, debt scalars, debt service by year, levered CF).
+#    Blocks start from the Operating Model's actual rows and apply only what the two axes change:
+#      - purchase price: reassessed tax (scales with price), closing costs, equity, the assumption
+#        paydown test (Scenario A) or the LTV leg (Scenario B)
+#      - exit cap: exit value AND the refinance appraisal (refi value = refi-year NOI / exit cap)
+#      - renovation premium / cost: classic-unit rent (Year-1 capture, full from Year 2), capex
+#      - rent growth (Table 2): the rent tracks are rebuilt per cell at the shifted growth path,
+#        and tax growth (tied to terminal rent growth) shifts with it.
+#    The assumed loans, refinance (sizing, capital call, prepayment premium) and exit are rebuilt
+#    per scenario with the same rules as the Debt (Assumed) / Returns (Assumed) tabs. CHECKS
+#    confirms each grid's base cell equals the model's own IRR. verify_model.py re-runs every
+#    exact cell through its full engine.
 # =====================================================================
 sn = sheet("Sensitivity")
-colwidths(sn, [22] + [13] * 5)
+colwidths(sn, [30] + [14] * 11)
 r = 1
-r = title(sn, r, "SENSITIVITY — built on SCENARIO B (ALTERNATIVE: new-debt) debt structure; see note")
+r = title(sn, r, "SENSITIVITY — Tables 1-3 on SCENARIO A (BASE CASE, assumed debt); Table 4 = Scenario B (new debt), secondary")
 sn.cell(row=r, column=1, value=(
-    "Each grid is a self-contained proxy calc: Year-1 NOI starts from the Operating Model's base case "
-    "and is adjusted only for what that table's two axes change (tax, debt sizing, renovation NOI/capex, "
-    "or a flat rent-growth override); it does not re-run the full unit-by-unit burn-off engine 25 times. "
-    "Debt is re-sized where price or capex changes; held at the base-case loan where it doesn't. "
-    "IRR/EM values are pulled from the 'calculation detail' rows near the bottom of this tab. "
-    "DEBT STRUCTURE IN THESE GRIDS IS SCENARIO B (new debt, 7.10% floating) -- NOT the Scenario A base case. "
-    "Read them as directional, not as base-case returns.")).font = NOTE
+    "Deal-level levered IRR (top) and equity multiple (bottom). Pre-promote: with pari passu capital, LP IRR = deal IRR "
+    "whenever the deal is below the 8% pref. Exit cap runs base +/- 100 bps. Axis steps live on Assumptions. "
+    "Each cell is computed in its own calculation block at the bottom of this tab (not a shortcut): assumed loans after "
+    "any required paydown, refinance sized on the scenario's refi-year NOI and exit cap, Year-3 capital call, prepayment "
+    "premium, tax-adjusted exit. Every cell is exact (verify_model.py re-runs each one through its full engine).")).font = NOTE
+sn.cell(row=r, column=1).alignment = Alignment(wrap_text=True)
+sn.row_dimensions[r].height = 60
 r += 2
 
-def cumprinc_end_balance(loan_expr, n_years):
-    return f"({loan_expr}+CUMPRINC({A['rate']},{A['amort_years']},{loan_expr},1,{n_years},0))"
+YC = [get_column_letter(c) for c in YEAR_COLS[:6]]          # Operating Model columns, Years 1..6
+YR = [f"{OPS}{c}${OP['yr_row']}" for c in YC]              # year-number cells (no typed year indices)
+LOSS = f"({A['vacancy']}+{A['credit_loss']}+{A['concessions']})"
+HOLD_C, MAT_C, IO_C = A['hold_years'], A['assum_first_maturity_yr'], A['io_years']
+RATE, AM, CONST = A['rate'], A['amort_years'], DEBT['const_addr']
+SENS_BASE = {}
 
-noi1 = noi_y1
-loan1 = DEBT['loan_addr']
-equity1 = CAP['equity_addr']
-uses1 = CAP['uses_total_addr']
 
-# ---- helper-row builders: each writes Year0..Year5 into one row, returns (irr_addr, em_addr) ----
-HELPER = {'row': None}
+def sens_block(row, label, scen, pk, ec, dg, prem, ck, growth_rows=False):
+    """Writes one scenario block starting at `row` (4 rows, or 4 + 2*types + 1 when growth_rows). Returns
+    (irr_addr, em_addr, next_row). pk = price factor, ec = exit cap, dg = market rent growth shift,
+    prem = premium $/mo, ck = reno cost factor (Excel expressions, normally grid header cells).
+    growth_rows=True re-runs the unit-by-unit rent engine (market, prior-renovated and classic tracks)
+    at the shifted growth path, so rent-growth cells are exact rather than a scaling shortcut."""
+    gpr_s = None
+    if growth_rows:
+        k = f"{A['turnover_rate']}*{A['burnoff_pct']}"
+        terms = {i: [] for i in range(6)}
+        for tb in type_blocks:
+            ri = tb['row_i']
+            mrow, prow = row, row + 1
+            sn.cell(row=mrow, column=1, value=f"{label} | {tb['name']} market rent/mo").font = NOTE
+            sn.cell(row=prow, column=1, value=f"{label} | {tb['name']} prior-renovated rent/mo").font = NOTE
+            for i, c in enumerate(YC):
+                col, prev = get_column_letter(3 + i), get_column_letter(2 + i)
+                g = f"({OPS}{c}${OP['grow_row']}+{dg})"
+                m_f = f"='Unit Mix'!$H${ri}*(1+{g})" if i == 0 else f"={prev}{mrow}*(1+{g})"
+                base = f"'Unit Mix'!$G${ri}" if i == 0 else f"{prev}{prow}"
+                sn.cell(row=mrow, column=3 + i, value=m_f).number_format = USD
+                sn.cell(row=prow, column=3 + i, value=f"={base}+{k}*({col}{mrow}-{base})").number_format = USD
+                classic = (f"('Unit Mix'!$F${ri}*(1-{A['reno_y1_capture']})+({col}{mrow}+{prem})*{A['reno_y1_capture']})"
+                           if i == 0 else f"({col}{mrow}+{prem})")
+                terms[i].append(f"'Unit Mix'!$C${ri}*{classic}+'Unit Mix'!$D${ri}*{col}{prow}")
+            row += 2
+        sn.cell(row=row, column=1, value=f"{label} | scheduled rent (GPR) at shifted growth").font = NOTE
+        for i in range(6):
+            sn.cell(row=row, column=3 + i, value="=(" + "+".join(terms[i]) + ")*12").number_format = USD
+        gpr_s = row
+        row += 1
+    q0, q1, q2, q3 = row, row + 1, row + 2, row + 3
+    sn.cell(row=q0, column=1, value=f"{label} | NOI Y1..Y6, pretax Y6").font = NOTE
+    tax_s = lambda i: f"{OPS}$B${OP['tax_row']}*{pk}*(1+{A['tax_growth']}+{dg})^({YR[i]}-1)"  # tax grows with just value
+    for i, c in enumerate(YC):
+        col = get_column_letter(3 + i)
+        prem_rev = (f"{UM['classic_total_addr']}*({prem}-{A['reno_premium_mo']})*12*IF({YR[i]}=1,{A['reno_y1_capture']},1)"
+                    if gpr_s is None else "0")  # growth blocks already carry the premium inside the classic track
+        rent_rev = f"({col}{gpr_s}-{OPS}{c}{OP['gpr_row']})" if gpr_s is not None else "0"
+        f = (f"={OPS}{c}{OP['noi_row']}-{OPS}{c}{OP['tax_row']}+{tax_s(i)}"
+             f"+({rent_rev}+{prem_rev})*(1-{LOSS})*(1-{A['mgmt_fee_pct']})")
+        sn.cell(row=q0, column=3 + i, value=f).number_format = USD
+    sn.cell(row=q0, column=9, value=f"=H{q0}-{tax_s(5)}").number_format = USD  # Y6 NOI before tax
+    exit_net = f"I{q0}/({ec}+{RET['eff_tax_exit_addr']})*(1-{A['cost_of_sale_exit']})"
+    uses = f"B{q1}*(1+{A['closing_pct']})+{UM['reno_total_addr']}*{ck}"
+    sn.cell(row=q1, column=1, value=f"{label} | debt scalars").font = NOTE
+    sn.cell(row=q1, column=2, value=f"={A['price']}*{pk}").number_format = USD  # price
+    if scen == "A":
+        L0 = f"({A['assum_first_bal']}+{A['assum_supp_bal']})"
+        sn.cell(row=q1, column=3, value=f"=MAX(0,{L0}-{A['assum_max_ltv']}*B{q1})").number_format = USD      # paydown
+        sn.cell(row=q1, column=4, value=f"={A['assum_first_bal']}-MAX(0,C{q1}-{A['assum_supp_bal']})").number_format = USD
+        sn.cell(row=q1, column=5, value=f"={A['assum_supp_bal']}-MIN(C{q1},{A['assum_supp_bal']})").number_format = USD
+        sn.cell(row=q1, column=6, value=f"={uses}+(D{q1}+E{q1})*{A['assum_fee_pct']}-(D{q1}+E{q1})").number_format = USD  # equity
+        r1, r2 = A['assum_first_rate'], A['assum_supp_rate']
+        sn.cell(row=q1, column=7, value=(f"=IF({A['assum_io']}=1,D{q1}+E{q1},"
+                                         f"-FV({r1},{MAT_C},PMT({r1},{AM},D{q1}),D{q1})-FV({r2},{MAT_C},PMT({r2},{AM},E{q1}),E{q1}))")).number_format = USD  # payoff at maturity
+        refi_noi = f"INDEX(C{q0}:H{q0},{MAT_C}+1)"
+        sn.cell(row=q1, column=8, value=f"=MIN({refi_noi}/{ec}*{A['ltv']},{refi_noi}/({A['min_dscr']}*{CONST}))").number_format = USD  # refi loan
+        n_am = f"MAX(0,{HOLD_C}-{MAT_C}-{IO_C})"
+        sn.cell(row=q1, column=9, value=f"=IF({n_am}=0,H{q1},-FV({RATE},{n_am},PMT({RATE},{AM},H{q1}),H{q1}))").number_format = USD  # refi bal at sale
+        sn.cell(row=q1, column=10, value=f"=I{q1}*IF({HOLD_C}>{MAT_C},INDEX({A['prepay_range']},{HOLD_C}-{MAT_C}),0)").number_format = USD
+        sn.cell(row=q1, column=11, value=f"={exit_net}-I{q1}-J{q1}").number_format = USD  # net sale proceeds
+        eq, proceeds = f"F{q1}", f"K{q1}"
+        sn.cell(row=q2, column=1, value=f"{label} | debt service Y1..Y5").font = NOTE
+        for i in range(HOLD):
+            t = YR[i]
+            f = (f"=IF({t}<={MAT_C},IF({A['assum_io']}=1,D{q1}*{r1}+E{q1}*{r2},-PMT({r1},{AM},D{q1})-PMT({r2},{AM},E{q1})),"
+                 f"IF({t}-{MAT_C}<={IO_C},H{q1}*{RATE},-PMT({RATE},{AM},H{q1})))")
+            sn.cell(row=q2, column=3 + i, value=f).number_format = USD
+        extra = lambda i: f"-IF({YR[i]}={MAT_C},G{q1}-H{q1},0)"
+    else:
+        sn.cell(row=q1, column=3, value=f"=MIN(B{q1}*{A['ltv']},C{q0}/({A['min_dscr']}*{CONST}))").number_format = USD  # loan
+        sn.cell(row=q1, column=4, value=f"={uses}-C{q1}").number_format = USD  # equity
+        n_am = f"MAX(0,{HOLD_C}-{IO_C})"
+        sn.cell(row=q1, column=5, value=f"=IF({n_am}=0,C{q1},-FV({RATE},{n_am},PMT({RATE},{AM},C{q1}),C{q1}))").number_format = USD
+        sn.cell(row=q1, column=6, value=f"=E{q1}*INDEX({A['prepay_range']},{HOLD_C})").number_format = USD
+        sn.cell(row=q1, column=7, value=f"={exit_net}-E{q1}-F{q1}").number_format = USD
+        eq, proceeds = f"D{q1}", f"G{q1}"
+        sn.cell(row=q2, column=1, value=f"{label} | debt service Y1..Y5").font = NOTE
+        for i in range(HOLD):
+            sn.cell(row=q2, column=3 + i, value=f"=IF({YR[i]}<={IO_C},C{q1}*{RATE},-PMT({RATE},{AM},C{q1}))").number_format = USD
+        extra = lambda i: ""
+    sn.cell(row=q3, column=1, value=f"{label} | levered CF Y0..Y5, IRR, EM").font = NOTE
+    sn.cell(row=q3, column=2, value=f"=-{eq}").number_format = USD
+    for i in range(HOLD):
+        col = get_column_letter(3 + i)
+        c = YC[i]
+        f = (f"={OPS}{c}{OP['ucf_row']}+({col}{q0}-{OPS}{c}{OP['noi_row']})-{col}{q2}{extra(i)}"
+             f"+IF({YR[i]}={HOLD_C},{proceeds},0)")
+        sn.cell(row=q3, column=3 + i, value=f).number_format = USD
+    sn.cell(row=q3, column=8, value=f'=IFERROR(IRR(B{q3}:G{q3}),"N/A")').number_format = PCT1
+    sn.cell(row=q3, column=9, value=f"=SUM(C{q3}:G{q3})/{eq}").number_format = '0.00"x"'
+    return f"'Sensitivity'!$H${q3}", f"'Sensitivity'!$I${q3}", q3 + 2
 
-def write_helper_row(ws, row, label, equity_expr, cf_list):
-    ws.cell(row=row, column=1, value=label).font = NOTE
-    ws.cell(row=row, column=2, value=f"=-({equity_expr})").number_format = USDC
-    for i, cf in enumerate(cf_list):
-        ws.cell(row=row, column=3 + i, value=f"={cf}").number_format = USDC
-    irr_c = 3 + len(cf_list)
-    em_c = irr_c + 1
-    ws.cell(row=row, column=irr_c, value=f'=IFERROR(IRR(B{row}:{get_column_letter(2+len(cf_list))}{row}),"N/A")').number_format = PCT1
-    ws.cell(row=row, column=em_c,
-            value=f"=SUM(C{row}:{get_column_letter(2+len(cf_list))}{row})/({equity_expr})").number_format = '0.00"x"'
-    return f"'Sensitivity'!${get_column_letter(irr_c)}${row}", f"'Sensitivity'!${get_column_letter(em_c)}${row}"
 
-# ---- Table 1: Exit Cap x Rent Growth ----
-r = section(sn, r, "TABLE 1 — Exit Cap Rate (rows) x Flat Rent Growth Override (cols) | Levered IRR (top) / Equity Multiple (bottom)", span=6)
-exitcap_labels = ["Entry+0bps", "Entry+25bps", "Entry+50bps (base)", "Entry+75bps", "Entry+100bps"]
-exitcap_spreads = [0.0, 0.0025, 0.0050, 0.0075, 0.0100]
-growth_vals5 = [0.015, 0.020, 0.025, 0.030, 0.035]
-hdr = r
-sn.cell(row=hdr, column=1, value="Exit Cap \\ Rent Gr.").font = BOLD
-for j, g in enumerate(growth_vals5):
-    c = sn.cell(row=hdr, column=2 + j, value=g); c.font = BOLD; c.number_format = PCT1
+KS = [-2, -1, 0, 1, 2]
+TABLES = [
+    dict(key="T1", scen="A", title="TABLE 1 (Scenario A, BASE CASE) — Exit Cap (rows) x Purchase Price (cols)",
+         rows=[(f"={A['exit_cap']}+({k})*{A['sens_exit_step']}", PCT) for k in KS],
+         cols=[(f"={A['price']}*(1+({k})*{A['sens_price_step']})", USDC) for k in KS],
+         args=lambda rh, ch: dict(pk=f"({ch}/{A['price']})", ec=rh, dg="0", prem=A['reno_premium_mo'], ck="1"),
+         base=(2, 2), note=None),
+    dict(key="T2", scen="A", title="TABLE 2 (Scenario A, BASE CASE) — Exit Cap (rows) x Market Rent Growth, change vs. base schedule (cols)",
+         rows=[(f"={A['exit_cap']}+({k})*{A['sens_exit_step']}", PCT) for k in KS],
+         cols=[(f"=({k})*{A['sens_growth_step']}", '+0.00%;-0.00%;0.00%') for k in KS],
+         args=lambda rh, ch: dict(pk="1", ec=rh, dg=ch, prem=A['reno_premium_mo'], ck="1"),
+         base=(2, 2), note=("Growth change is added to every year's market rent growth. Each cell re-runs the unit-by-unit rent "
+                            "engine (market, prior-renovated burn-off, classic tracks) and property-tax growth, which is tied to "
+                            "terminal rent growth, at the shifted path. Exact.")),
+    dict(key="T3", scen="A", title="TABLE 3 (Scenario A, BASE CASE) — Renovation Premium over Market, $/mo (rows) x Renovation Cost per Unit (cols)",
+         rows=[(f"={A['reno_premium_mo']}+({k})*{A['sens_prem_step']}", USDC) for k in [0, 1, 2, 3, 4]],
+         cols=[(f"={A['reno_per_unit']}*(1+({k})*{A['sens_cost_step']})", USDC) for k in KS],
+         args=lambda rh, ch: dict(pk="1", ec=A['exit_cap'], dg="0", prem=rh, ck=f"({ch}/{A['reno_per_unit']})"),
+         base=(0, 2), note="Base premium is $0 (renovated units reach market). Rows show what a premium above market would add."),
+    dict(key="T4", scen="B", title="TABLE 4 (SECONDARY: Scenario B, new agency debt) — Exit Cap (rows) x Purchase Price (cols)",
+         rows=[(f"={A['exit_cap']}+({k})*{A['sens_exit_step']}", PCT) for k in KS],
+         cols=[(f"={A['price']}*(1+({k})*{A['sens_price_step']})", USDC) for k in KS],
+         args=lambda rh, ch: dict(pk=f"({ch}/{A['price']})", ec=rh, dg="0", prem=A['reno_premium_mo'], ck="1"),
+         base=(2, 2), note="New loan re-sized at each price (LTV or DSCR, whichever binds)."),
+]
+
+grid_pos = {}
+for T in TABLES:
+    r = section(sn, r, T['title'] + " | Levered IRR (top) / Equity Multiple (bottom)", span=6)
+    if T['note']:
+        sn.cell(row=r, column=1, value=T['note']).font = NOTE
+        r += 1
+    hdr = r
+    sn.cell(row=hdr, column=1, value="rows \\ cols").font = BOLD
+    for j, (f, fmt) in enumerate(T['cols']):
+        c = sn.cell(row=hdr, column=2 + j, value=f); c.font = BOLD; c.number_format = fmt
+    r += 1
+    irr_top = r
+    for i, (f, fmt) in enumerate(T['rows']):
+        c = sn.cell(row=irr_top + i, column=1, value=f); c.number_format = fmt
+    em_top = irr_top + len(T['rows']) + 1
+    sn.cell(row=em_top - 1, column=1, value="(same grid, Equity Multiple)").font = NOTE
+    for i, (f, fmt) in enumerate(T['rows']):
+        c = sn.cell(row=em_top + i, column=1, value=f"=A{irr_top + i}"); c.number_format = fmt
+    grid_pos[T['key']] = (hdr, irr_top, em_top)
+    r = em_top + len(T['rows']) + 1
+
 r += 1
-irr_cells_t1 = [[None]*5 for _ in range(5)]
-em_cells_t1 = [[None]*5 for _ in range(5)]
-for i, spread in enumerate(exitcap_spreads):
-    for j, g in enumerate(growth_vals5):
-        ec = f"({RET['entry_cap_addr']}+{spread})"
-        ds_io = f"({loan1}*{A['rate']})"
-        ds_amort = f"(-PMT({A['rate']},{A['amort_years']},{loan1}))"
-        end_bal5 = cumprinc_end_balance(loan1, 3)
-        cf_years = [f"({noi1}*(1+{g})^{n})" for n in range(1, 6)]
-        y6noi = f"({noi1}*(1+{g})^6)"
-        exitprice = f"({y6noi}/({ec}+{RET['eff_tax_exit_addr']}))"
-        proceeds = f"({exitprice}*(1-{A['cost_of_sale_exit']})-{end_bal5})"
-        cf = [f"({cf_years[0]}-{ds_io})", f"({cf_years[1]}-{ds_io})",
-              f"({cf_years[2]}-{ds_amort})", f"({cf_years[3]}-{ds_amort})",
-              f"({cf_years[4]}-{ds_amort}+{proceeds})"]
-        irr_cells_t1[i][j] = (equity1, cf)
-r_grid1_irr = r
-for i in range(5):
-    sn.cell(row=r + i, column=1, value=exitcap_labels[i])
-r_grid1_em = r + 6
-for i in range(5):
-    sn.cell(row=r_grid1_em + i, column=1, value=exitcap_labels[i])
-sn.cell(row=r_grid1_em - 1, column=1, value="(same grid, Equity Multiple)").font = NOTE
-r = r_grid1_em + 6
-r += 1
-
-# ---- Table 2: Purchase Price x Exit Cap ----
-r = section(sn, r, "TABLE 2 — Purchase Price (rows) x Exit Cap Spread over Entry (cols) | Levered IRR (top) / Equity Multiple (bottom)", span=6)
-price_deltas = [-0.10, -0.05, 0.0, 0.05, 0.10]
-price_labels = ["-10%", "-5%", "Base ($13.8M)", "+5%", "+10%"]
-spread_labels2 = exitcap_labels
-hdr = r
-sn.cell(row=hdr, column=1, value="Price \\ Exit Spread").font = BOLD
-for j, lbl in enumerate(spread_labels2):
-    c = sn.cell(row=hdr, column=2 + j, value=lbl); c.font = BOLD
-r += 1
-
-def price_scenario_cf(pdelta, spread):
-    price_s = f"({A['price']}*(1+{pdelta}))"
-    just_val_s = f"({price_s}*{A['cos_factor']})"
-    tax_y1_s = f"({just_val_s}*{A['millage']})"
-    # noi1_s (Year-1 forward basis) drives the actual projected cash flows -- that's
-    # genuinely what the property is expected to collect, business-plan-inclusive.
-    noi1_s = f"({noi1}+{A['buyer_tax_y1']}-{tax_y1_s})"
-    # day0_noi_s (Day-0 in-place basis) drives ONLY the entry-cap-rate figure used to
-    # anchor the exit cap, per the same correction applied on the Returns tab.
-    day0_noi_s = f"({day0_noi_addr}+{A['buyer_tax_y1']}-{tax_y1_s})"
-    loan_s = f"({price_s}*{A['ltv']})"
-    uses_s = f"({price_s}*(1+{A['closing_pct']})+({uses1}-{A['price']}*(1+{A['closing_pct']})))"
-    equity_s = f"({uses_s}-{loan_s})"
-    entry_cap_s = f"({day0_noi_s}/{price_s})"
-    ec = f"({entry_cap_s}+{spread})"
-    ds_io = f"({loan_s}*{A['rate']})"
-    ds_amort = f"(-PMT({A['rate']},{A['amort_years']},{loan_s}))"
-    end_bal5 = cumprinc_end_balance(loan_s, 3)
-    base_g = A['growth'][3]
-    cf_years = [f"({noi1_s}*(1+{base_g})^{n})" for n in range(0, 5)]
-    y6noi = f"({noi1_s}*(1+{base_g})^5)"
-    exitprice = f"({y6noi}/({ec}+{RET['eff_tax_exit_addr']}))"
-    proceeds = f"({exitprice}*(1-{A['cost_of_sale_exit']})-{end_bal5})"
-    cf = [f"({cf_years[0]}-{ds_io})", f"({cf_years[1]}-{ds_io})",
-          f"({cf_years[2]}-{ds_amort})", f"({cf_years[3]}-{ds_amort})",
-          f"({cf_years[4]}-{ds_amort}+{proceeds})"]
-    return equity_s, cf
-
-r_grid2_irr = r
-for i in range(5):
-    sn.cell(row=r + i, column=1, value=price_labels[i])
-r_grid2_em = r + 6
-sn.cell(row=r_grid2_em - 1, column=1, value="(same grid, Equity Multiple)").font = NOTE
-for i in range(5):
-    sn.cell(row=r_grid2_em + i, column=1, value=price_labels[i])
-r = r_grid2_em + 6
-r += 1
-
-# ---- Table 3: Renovation Premium x Renovation Cost ----
-r = section(sn, r, "TABLE 3 — Renovation Premium/mo (rows) x Renovation Cost/unit (cols) | Levered IRR (top) / Equity Multiple (bottom)", span=6)
-prem_vals = [0, 50, 100, 175, 250]
-prem_labels = ["$0/mo (base)", "$50/mo", "$100/mo", "$175/mo (old base)", "$250/mo"]
-cost_deltas = [-0.20, -0.10, 0.0, 0.10, 0.20]
-cost_labels = ["-20%", "-10%", "Base ($20,460)", "+10%", "+20%"]
-hdr = r
-sn.cell(row=hdr, column=1, value="Premium \\ Cost").font = BOLD
-for j, lbl in enumerate(cost_labels):
-    c = sn.cell(row=hdr, column=2 + j, value=lbl); c.font = BOLD
-r += 1
-
-def reno_scenario_cf(prem_mo, cdelta):
-    cost_s = f"({A['reno_per_unit']}*(1+{cdelta}))"
-    capex_s = f"({UM['classic_total_addr']}*{cost_s})"
-    capex_delta = f"({capex_s}-{UM['reno_total_addr']})"
-    equity_s = f"({equity1}+{capex_delta})"
-    prem_delta_annual = f"(({prem_mo}-{A['reno_premium_mo']})*12*{UM['classic_total_addr']})"
-    noi1_s = f"({noi1}+{prem_delta_annual}*{A['reno_y1_capture']})"
-    noi_y_s = [f"({noi1_s}+{prem_delta_annual})" for _ in range(2, 6)]
-    base_g = A['growth'][3]
-    ds_io = f"({loan1}*{A['rate']})"
-    ds_amort = f"(-PMT({A['rate']},{A['amort_years']},{loan1}))"
-    end_bal5 = cumprinc_end_balance(loan1, 3)
-    y6_s = f"({noi_y_s[3]}*(1+{base_g}))"
-    exitprice = f"({y6_s}/({RET['exit_cap_base_addr']}+{RET['eff_tax_exit_addr']}))"
-    proceeds = f"({exitprice}*(1-{A['cost_of_sale_exit']})-{end_bal5})"
-    cf = [f"({noi1_s}-{ds_io})", f"({noi_y_s[0]}-{ds_io})",
-          f"({noi_y_s[1]}-{ds_amort})", f"({noi_y_s[2]}-{ds_amort})",
-          f"({noi_y_s[3]}-{ds_amort}+{proceeds})"]
-    return equity_s, cf
-
-r_grid3_irr = r
-for i in range(5):
-    sn.cell(row=r + i, column=1, value=prem_labels[i])
-r_grid3_em = r + 6
-sn.cell(row=r_grid3_em - 1, column=1, value="(same grid, Equity Multiple)").font = NOTE
-for i in range(5):
-    sn.cell(row=r_grid3_em + i, column=1, value=prem_labels[i])
-r = r_grid3_em + 6
+r = section(sn, r, "CALCULATION DETAIL (one 4-row block per grid cell; feeds the grids above)", span=11)
+sn.cell(row=r, column=1, value=(
+    "Block rows: (1) NOI Years 1-6 in C:H, Year-6 NOI before property tax in I; (2) scalars -- Scenario A: B price, C required "
+    "assumption paydown, D/E first/supplemental assumed, F equity, G payoff at maturity, H refi loan, I refi balance at sale, "
+    "J prepayment premium, K net sale proceeds; Scenario B: B price, C loan, D equity, E balance at sale, F prepayment premium, "
+    "G net sale proceeds; (3) debt service Years 1-5; (4) levered cash flow Years 0-5, IRR (H), equity multiple (I). Table 2 "
+    "blocks first carry 9 extra rows: market and prior-renovated rent by unit type, and scheduled rent, at the shifted growth path.")).font = NOTE
 r += 2
-
-# ---- calculation detail area: one helper row per scenario, all 3 tables ----
-r = section(sn, r, "CALCULATION DETAIL (per-scenario cash flows -- not for review, feeds the grids above)", span=9)
-hdr = r
-for i, h in enumerate(["Scenario", "Year 0", "Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "IRR", "EM"], start=1):
-    sn.cell(row=hdr, column=i, value=h).font = BOLD
-r += 1
-
-for i, spread in enumerate(exitcap_spreads):
-    for j, g in enumerate(growth_vals5):
-        equity_s, cf = irr_cells_t1[i][j]
-        label = f"T1 {exitcap_labels[i]} / {g:.1%}"
-        irr_addr, em_addr = write_helper_row(sn, r, label, equity_s, cf)
-        sn.cell(row=r_grid1_irr + i, column=2 + j, value=f"={irr_addr}").number_format = PCT1
-        sn.cell(row=r_grid1_em + i, column=2 + j, value=f"={em_addr}").number_format = '0.00"x"'
-        r += 1
-
-for i, pd in enumerate(price_deltas):
-    for j, sp in enumerate(exitcap_spreads):
-        equity_s, cf = price_scenario_cf(pd, sp)
-        label = f"T2 {price_labels[i]} / {spread_labels2[j]}"
-        irr_addr, em_addr = write_helper_row(sn, r, label, equity_s, cf)
-        sn.cell(row=r_grid2_irr + i, column=2 + j, value=f"={irr_addr}").number_format = PCT1
-        sn.cell(row=r_grid2_em + i, column=2 + j, value=f"={em_addr}").number_format = '0.00"x"'
-        r += 1
-
-for i, pv in enumerate(prem_vals):
-    for j, cd in enumerate(cost_deltas):
-        equity_s, cf = reno_scenario_cf(pv, cd)
-        label = f"T3 {prem_labels[i]} / {cost_labels[j]}"
-        irr_addr, em_addr = write_helper_row(sn, r, label, equity_s, cf)
-        sn.cell(row=r_grid3_irr + i, column=2 + j, value=f"={irr_addr}").number_format = PCT1
-        sn.cell(row=r_grid3_em + i, column=2 + j, value=f"={em_addr}").number_format = '0.00"x"'
-        r += 1
+for T in TABLES:
+    hdr, irr_top, em_top = grid_pos[T['key']]
+    for i in range(len(T['rows'])):
+        for j in range(len(T['cols'])):
+            rh = f"$A${irr_top + i}"
+            ch = f"{get_column_letter(2 + j)}${hdr}"
+            label = f"{T['key']} r{i+1} c{j+1}"
+            irr_addr, em_addr, r_next = sens_block(r, label, T['scen'], growth_rows=(T['key'] == "T2"), **T['args'](rh, ch))
+            ci = sn.cell(row=irr_top + i, column=2 + j, value=f"={irr_addr}")
+            ce = sn.cell(row=em_top + i, column=2 + j, value=f"={em_addr}")
+            ci.number_format, ce.number_format = PCT1, '0.00"x"'
+            if (i, j) == T['base']:
+                ci.font = ce.font = BOLD
+                SENS_BASE[T['key']] = f"'Sensitivity'!${get_column_letter(2 + j)}${irr_top + i}"
+            r = r_next
 
 print("Sensitivity built through row", r)
 wb.save("model_wip.xlsx")
@@ -1862,7 +1955,18 @@ check_row("Refi Loan - Cumulative Post-Refi Principal - Year5 Refi End Balance",
           f"={DA['refi_loan_addr']}-SUM('Debt (Assumed)'!C{rf_prin_row}:{get_column_letter(DA['DACOLS'][-1])}{rf_prin_row})-'Debt (Assumed)'!{get_column_letter(DA['DACOLS'][-1])}{rf_end_row}")
 r += 1
 
-r = section(ck, r, "10. FORMULA ERROR SCAN", span=3)
+r = section(ck, r, "10. SENSITIVITY GRIDS: BASE CELL = MODEL IRR (catches any drift between the grid blocks and the model tabs)", span=3)
+for key, target, lab in [("T1", f"'Returns (Assumed)'!B{RA['a_irr_row']}", "Table 1 base cell - Scenario A levered IRR"),
+                         ("T2", f"'Returns (Assumed)'!B{RA['a_irr_row']}", "Table 2 base cell - Scenario A levered IRR"),
+                         ("T3", f"'Returns (Assumed)'!B{RA['a_irr_row']}", "Table 3 base cell - Scenario A levered IRR"),
+                         ("T4", f"'Returns'!B{RET['lev_irr_row']}", "Table 4 base cell - Scenario B levered IRR")]:
+    ck.cell(row=r, column=1, value=lab)
+    ck.cell(row=r, column=2, value=f"={SENS_BASE[key]}-{target}").number_format = "0.000000%"
+    ck.cell(row=r, column=3, value=f'=IF(ABS(B{r})<0.000001,"OK","FAIL")')
+    r += 1
+r += 1
+
+r = section(ck, r, "11. FORMULA ERROR SCAN", span=3)
 ck.cell(row=r, column=1, value="See Phase 3 verification report for a full-workbook #REF!/#DIV/0!/#VALUE!/#NAME? scan (done via LibreOffice headless recalculation + openpyxl re-read, not a formula on this tab).").font = NOTE
 r += 2
 
@@ -1900,13 +2004,14 @@ sm.cell(row=r, column=1, value="PEAK EQUITY (Scenario A)").font = BOLD; sm.cell(
 
 r = section(sm, r, "KEY METRICS (property-level, same under both debt scenarios unless labeled)", span=2)
 sm.cell(row=r, column=1, value="1. Broker-Stated Cap Rate (seller's current tax basis)"); sm.cell(row=r, column=2, value=f"={A['broker_cap']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, reassessed tax (TRUE going-in -- anchors the exit cap below)").font = BOLD
+sm.cell(row=r, column=1, value="2. In-Place Cap Rate, Day-0, reassessed tax (TRUE going-in)").font = BOLD
 sm.cell(row=r, column=2, value=f"={RET['cap_inplace_addr']}").font = BOLD
 sm.cell(row=r, column=2).number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr business plan -- NOT used for exit-spread convention)")
+sm.cell(row=r, column=1, value="3. Year-1 Forward Cap Rate (includes partial-yr business plan)")
 sm.cell(row=r, column=2, value=f"='Returns'!B{RET['cap_y1fwd_row']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Exit Cap Rate (base case, In-Place entry + 50bps -- see NOI Bridge on Returns tab)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT1; r += 1
-sm.cell(row=r, column=1, value="Assumed-Debt LTV at Close (fixed balance, not sized)"); sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}/{A['price']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Exit Cap Rate (base case: Fort Lauderdale market 5.60% + 100 bps Class C / vintage spread)"); sm.cell(row=r, column=2, value=f"={RET['exit_cap_base_addr']}").number_format = PCT; r += 1
+sm.cell(row=r, column=1, value="Assumed-Debt LTV at Close (after any lender-required paydown)"); sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}/{A['price']}").number_format = PCT1; r += 1
+sm.cell(row=r, column=1, value="Agency Fixed Rate (Scenario B and the Scenario A refinance)"); sm.cell(row=r, column=2, value=f"={A['rate']}").number_format = PCT; r += 1
 sm.cell(row=r, column=1, value="Hold Period (structural)"); sm.cell(row=r, column=2, value=f"={A['hold_years']}").number_format = "0 \"years\""; r += 2
 
 r = section(sm, r, "RETURNS — BASE CASE: Scenario A, assumed debt", span=2)
@@ -1932,9 +2037,9 @@ sm.cell(row=r, column=1, value="Year-0 Loan Amount")
 sm.cell(row=r, column=2, value=f"={RA['a_loan_addr']}").number_format = USDC
 sm.cell(row=r, column=3, value=f"={DEBT['loan_addr']}").number_format = USDC
 r += 1
-sm.cell(row=r, column=1, value="Rate")
-sm.cell(row=r, column=2, value=f"={A['assum_blended_rate']}").number_format = PCT1
-sm.cell(row=r, column=3, value=f"={A['rate']}").number_format = PCT1
+sm.cell(row=r, column=1, value="Rate (A: blended assumed rate to Year 3, then agency refi; B: agency fixed)")
+sm.cell(row=r, column=2, value=f"={A['assum_blended_rate']}").number_format = PCT
+sm.cell(row=r, column=3, value=f"={A['rate']}").number_format = PCT
 r += 1
 sm.cell(row=r, column=1, value="Sponsor Equity Required")
 sm.cell(row=r, column=2, value=f"={RA['a_equity_addr']}").number_format = USDC
@@ -1953,35 +2058,35 @@ sm.cell(row=r, column=2, value=f"='Returns (Assumed)'!B{RA['a_coc1_row']}").numb
 sm.cell(row=r, column=3, value=f"='Returns'!C{RET['lev_before_exit_row']}/'Returns'!B{RET['inv_row']}").number_format = PCT1
 r += 2
 
-r = section(sm, r, "BID PRICE — max price by target return, BOTH debt scenarios (exit cap frozen at base-case market level)", span=8)
+r = section(sm, r, "BID PRICE — max price by target return, BOTH debt scenarios (solver output, not live formulas)", span=8)
 sm.cell(row=r, column=1, value=(
-    "Reported from price_solve.py (repo root), which runs the same engine verify_model.py checks line by line against this "
-    "workbook. Not live formulas: goal-seek is not expressible as static Excel formulas. Re-run the script after any "
-    "assumption change. Held fixed: exit cap (market level at asking price), assumed loan balances, rents, other opex, "
-    "reno capex. Moves with price: reassessed tax, closing costs, Scenario B loan (65% LTV), equity (plug).")).font = NOTE
+    "From price_solve.py (repo root), which runs the same engine verify_model.py checks line by line against this workbook, "
+    "and writes bid_prices.json, which this builder reads. Goal-seek is not expressible as static Excel formulas: re-run "
+    "price_solve.py, then build_model.py, after any assumption change (price_solve.py flags stale rows). Held fixed: exit cap "
+    "(a market input), assumed loan balances, rents, other opex, reno capex. Moves with price: reassessed tax, closing costs, "
+    "Scenario B loan (LTV/DSCR), the assumption paydown test (Scenario A), equity.")).font = NOTE
 r += 1
 hdr = r
-for i, h in enumerate(["Scenario / Target", "Max Price", "$/Unit", "vs $13.8M", "Going-In (In-Place) Cap",
-                       "Deal IRR", "LP IRR", "Price if exit cap floats"], start=1):
+for i, h in enumerate(["Scenario / Target", "Max Price", "$/Unit", "vs $13.8M ask", "Going-In (In-Place) Cap",
+                       "Deal IRR", "LP IRR", "A: required paydown / B: loan"], start=1):
     sm.cell(row=hdr, column=i, value=h).font = BOLD
 r += 1
-BID_ROWS = [
-    ("A (base): LP IRR = 8%", 13273194, 136837, -0.038, 0.0645, 0.08, 0.08, 12446851),
-    ("A (base): Levered IRR = 12%", 12649932, 130412, -0.083, 0.0685, 0.12, 0.1086, 11279057),
-    ("A (base): Levered IRR = 15%", 12261655, 126409, -0.111, 0.0712, 0.15, 0.1278, 10722578),
-    ("B (alt): LP IRR = 8%", 12642396, 130334, -0.084, 0.0686, 0.08, 0.08, 10742611),
-    ("B (alt): Levered IRR = 12%", 11838755, 122049, -0.142, 0.0744, 0.12, 0.1086, 9186571),
-    ("B (alt): Levered IRR = 15%", 11247732, 115956, -0.185, 0.0792, 0.15, 0.1278, 8245244),
-]
-for lab, pr, ppu, vs, cap, dirr, lirr, fl in BID_ROWS:
-    sm.cell(row=r, column=1, value=lab)
-    for c, (v, fmt) in enumerate([(pr, USDC), (ppu, USDC), (vs, PCT1), (cap, PCT1), (dirr, PCT1), (lirr, PCT1), (fl, USDC)], start=2):
-        sm.cell(row=r, column=c, value=v).number_format = fmt
+import json, os
+BID_ROWS = json.load(open("bid_prices.json"))["rows"] if os.path.exists("bid_prices.json") else []
+for row_ in BID_ROWS:
+    sm.cell(row=r, column=1, value=row_["label"])
+    if row_.get("unreachable"):
+        sm.cell(row=r, column=2, value=row_["note"])
+    else:
+        vals = [(row_["price"], USDC), (row_["ppu"], USDC), (row_["vs_ask"], PCT1), (row_["cap_inplace"], PCT),
+                (row_["deal_irr"], PCT), (row_["lp_irr"], PCT), (row_["debt_memo"], USDC)]
+        for c, (v, fmt) in enumerate(vals, start=2):
+            sm.cell(row=r, column=c, value=v).number_format = fmt
     r += 1
 sm.cell(row=r, column=1, value=(
-    "All six targets are reachable. Scenario A equity turns negative below ~$8.78M (the fixed $9.45M assumed loan would exceed "
-    "Total Uses); no solved price is near that floor. With pari passu capital, LP IRR = deal IRR until the 8% pref is met, "
-    "so target (a) is the same price as an 8% deal IRR.")).font = NOTE
+    "With pari passu capital, LP IRR = deal IRR until the 8% pref is met, so target (a) is the same price as an 8% deal IRR. "
+    "Scenario A: below ~$12.6M the assumption test (75% max LTV on price, a judgment) forces a principal paydown at closing, "
+    "which adds equity and removes 6.2% supplemental debt.")).font = NOTE
 r += 2
 
 r = section(sm, r, "DEAL THESIS", span=2)
@@ -2011,3 +2116,4 @@ with open("_cellmap_all.json", "w") as f:
                     RET={k: v for k, v in RET.items() if isinstance(v, (str, int))},
                     WF={k: v for k, v in WF.items() if isinstance(v, (str, int))}),
               f, indent=2, default=str)
+
